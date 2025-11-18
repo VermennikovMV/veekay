@@ -48,9 +48,11 @@ struct Transform {
 };
 
 struct Model {
-	Mesh mesh;
-	Transform transform;
-	veekay::vec3 albedo_color;
+        Mesh mesh;
+        Transform transform;
+        veekay::vec3 albedo_color;
+        float angular_speed = 1.0f;
+        veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
 };
 
 struct Camera {
@@ -74,11 +76,13 @@ struct Camera {
 
 // NOTE: Scene objects
 inline namespace {
-	Camera camera{
-		.position = {0.0f, -0.5f, -3.0f}
-	};
+        Camera camera{
+                .position = {0.0f, -0.5f, -3.0f}
+        };
 
-	std::vector<Model> models;
+        std::vector<Model> models;
+
+        float rotation_speed = 45.0f;
 }
 
 // NOTE: Vulkan objects
@@ -96,8 +100,7 @@ inline namespace {
 	veekay::graphics::Buffer* scene_uniforms_buffer;
 	veekay::graphics::Buffer* model_uniforms_buffer;
 
-	Mesh plane_mesh;
-	Mesh cube_mesh;
+        Mesh cone_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -111,19 +114,24 @@ float toRadians(float degrees) {
 }
 
 veekay::mat4 Transform::matrix() const {
-	// TODO: Scaling and rotation
+        auto t = veekay::mat4::translation(position);
+        auto s = veekay::mat4::scaling(scale);
 
-	auto t = veekay::mat4::translation(position);
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(rotation.x));
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(rotation.y));
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(rotation.z));
 
-	return t;
+        return t * rz * ry * rx * s;
 }
 
 veekay::mat4 Camera::view() const {
-	// TODO: Rotation
+        auto t = veekay::mat4::translation(-position);
 
-	auto t = veekay::mat4::translation(-position);
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(-rotation.x));
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(-rotation.y));
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(-rotation.z));
 
-	return t;
+        return rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
@@ -498,119 +506,101 @@ void initialize(VkCommandBuffer cmd) {
 		                       write_infos, 0, nullptr);
 	}
 
-	// NOTE: Plane mesh initialization
-	{
-		// (v0)------(v1)
-		//  |  \       |
-		//  |   `--,   |
-		//  |       \  |
-		// (v3)------(v2)
-		std::vector<Vertex> vertices = {
-			{{-5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-			{{5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-		};
+        // NOTE: Cone mesh initialization
+        {
+                const float radius = 0.5f;
+                const float height = 1.0f;
+                const uint32_t segments = 32;
 
-		std::vector<uint32_t> indices = {
-			0, 1, 2, 2, 3, 0
-		};
+                std::vector<Vertex> vertices;
+                std::vector<uint32_t> indices;
 
-		plane_mesh.vertex_buffer = new veekay::graphics::Buffer(
-			vertices.size() * sizeof(Vertex), vertices.data(),
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                // Base center
+                vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
 
-		plane_mesh.index_buffer = new veekay::graphics::Buffer(
-			indices.size() * sizeof(uint32_t), indices.data(),
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+                // Base ring vertices
+                for (uint32_t i = 0; i < segments; ++i) {
+                        float angle = (float(i) / float(segments)) * 2.0f * float(M_PI);
+                        float x = radius * cosf(angle);
+                        float z = radius * sinf(angle);
 
-		plane_mesh.indices = uint32_t(indices.size());
-	}
+                        vertices.push_back(Vertex{{x, 0.0f, z}, {0.0f, -1.0f, 0.0f}, {0.5f + x, 0.5f + z}});
+                }
 
-	// NOTE: Cube mesh initialization
-	{
-		std::vector<Vertex> vertices = {
-			{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
-			{{+0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
-			{{+0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
-			{{-0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+                // Base indices (triangle fan)
+                for (uint32_t i = 0; i < segments; ++i) {
+                        uint32_t next = (i + 1) % segments;
+                        indices.push_back(0);
+                        indices.push_back(1 + next);
+                        indices.push_back(1 + i);
+                }
 
-			{{+0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-			{{+0.5f, -0.5f, +0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{+0.5f, +0.5f, +0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-			{{+0.5f, +0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+                const veekay::vec3 apex{0.0f, height, 0.0f};
 
-			{{+0.5f, -0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-			{{-0.5f, -0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-			{{-0.5f, +0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-			{{+0.5f, +0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+                for (uint32_t i = 0; i < segments; ++i) {
+                        uint32_t next = (i + 1) % segments;
 
-			{{-0.5f, -0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-			{{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{-0.5f, +0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-0.5f, +0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+                        veekay::vec3 b0 = vertices[1 + i].position;
+                        veekay::vec3 b1 = vertices[1 + next].position;
 
-			{{-0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{+0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-			{{+0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+                        veekay::vec3 edge0 = b0 - apex;
+                        veekay::vec3 edge1 = b1 - apex;
+                        veekay::vec3 normal = veekay::vec3::normalized(veekay::vec3::cross(edge1, edge0));
 
-			{{-0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{+0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-			{{+0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
-		};
+                        uint32_t start = static_cast<uint32_t>(vertices.size());
+                        vertices.push_back(Vertex{apex, normal, {0.5f, 1.0f}});
+                        vertices.push_back(Vertex{b0, normal, {0.0f, 0.0f}});
+                        vertices.push_back(Vertex{b1, normal, {1.0f, 0.0f}});
 
-		std::vector<uint32_t> indices = {
-			0, 1, 2, 2, 3, 0,
-			4, 5, 6, 6, 7, 4,
-			8, 9, 10, 10, 11, 8,
-			12, 13, 14, 14, 15, 12,
-			16, 17, 18, 18, 19, 16,
-			20, 21, 22, 22, 23, 20,
-		};
+                        indices.push_back(start);
+                        indices.push_back(start + 1);
+                        indices.push_back(start + 2);
+                }
 
-		cube_mesh.vertex_buffer = new veekay::graphics::Buffer(
-			vertices.size() * sizeof(Vertex), vertices.data(),
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                cone_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-		cube_mesh.index_buffer = new veekay::graphics::Buffer(
-			indices.size() * sizeof(uint32_t), indices.data(),
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+                cone_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-		cube_mesh.indices = uint32_t(indices.size());
-	}
+                cone_mesh.indices = uint32_t(indices.size());
+        }
 
-	// NOTE: Add models to scene
-	models.emplace_back(Model{
-		.mesh = plane_mesh,
-		.transform = Transform{},
-		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
-	});
+        // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = cone_mesh,
+                .transform = Transform{
+                        .position = {-1.5f, -0.5f, -2.0f},
+                        .scale = {0.8f, 0.8f, 0.8f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .angular_speed = 0.8f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {-2.0f, -0.5f, -1.5f},
-		},
-		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cone_mesh,
+                .transform = Transform{
+                        .position = {1.2f, -0.5f, -0.5f},
+                        .scale = {1.2f, 1.2f, 1.2f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .angular_speed = 1.4f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {1.5f, -0.5f, -0.5f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
-	});
-
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {0.0f, -0.5f, 1.0f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cone_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 1.2f},
+                        .scale = {0.6f, 0.6f, 0.6f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .angular_speed = 1.1f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+        });
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
@@ -620,11 +610,8 @@ void shutdown() {
 	vkDestroySampler(device, missing_texture_sampler, nullptr);
 	delete missing_texture;
 
-	delete cube_mesh.index_buffer;
-	delete cube_mesh.vertex_buffer;
-
-	delete plane_mesh.index_buffer;
-	delete plane_mesh.vertex_buffer;
+        delete cone_mesh.index_buffer;
+        delete cone_mesh.vertex_buffer;
 
 	delete model_uniforms_buffer;
 	delete scene_uniforms_buffer;
@@ -639,43 +626,19 @@ void shutdown() {
 }
 
 void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::End();
+        ImGui::Begin("Controls:");
+        ImGui::SliderFloat("Rotation speed", &rotation_speed, 0.0f, 360.0f, "%.1f deg/s");
+        ImGui::Text("Camera is fixed");
+        ImGui::End();
 
-	if (!ImGui::IsWindowHovered()) {
-		using namespace veekay::input;
+        static double previous_time = time;
+        float delta_time = static_cast<float>(time - previous_time);
+        previous_time = time;
 
-		if (mouse::isButtonDown(mouse::Button::left)) {
-			auto move_delta = mouse::cursorDelta();
-
-			// TODO: Use mouse_delta to update camera rotation
-			
-			auto view = camera.view();
-
-			// TODO: Calculate right, up and front from view matrix
-			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
-			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
-			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
-
-			if (keyboard::isKeyDown(keyboard::Key::w))
-				camera.position += front * 0.1f;
-
-			if (keyboard::isKeyDown(keyboard::Key::s))
-				camera.position -= front * 0.1f;
-
-			if (keyboard::isKeyDown(keyboard::Key::d))
-				camera.position += right * 0.1f;
-
-			if (keyboard::isKeyDown(keyboard::Key::a))
-				camera.position -= right * 0.1f;
-
-			if (keyboard::isKeyDown(keyboard::Key::q))
-				camera.position += up * 0.1f;
-
-			if (keyboard::isKeyDown(keyboard::Key::z))
-				camera.position -= up * 0.1f;
-		}
-	}
+        for (Model& model : models) {
+                float angular_velocity = model.angular_speed * rotation_speed;
+                model.transform.rotation += model.rotation_axis * (angular_velocity * delta_time);
+        }
 
 	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
 	SceneUniforms scene_uniforms{
