@@ -506,7 +506,7 @@ void initialize(VkCommandBuffer cmd) {
 		                       write_infos, 0, nullptr);
 	}
 
-        // NOTE: Cone mesh initialization
+        // NOTE: Cylinder mesh initialization
         {
                 const float radius = 0.5f;
                 const float height = 1.0f;
@@ -535,25 +535,55 @@ void initialize(VkCommandBuffer cmd) {
                         indices.push_back(1 + i);
                 }
 
-                const veekay::vec3 apex{0.0f, height, 0.0f};
+                // Top center
+                const uint32_t top_center_index = static_cast<uint32_t>(vertices.size());
+                vertices.push_back(Vertex{{0.0f, height, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}});
 
+                // Top ring vertices
+                const uint32_t top_ring_start = static_cast<uint32_t>(vertices.size());
+                for (uint32_t i = 0; i < segments; ++i) {
+                        float angle = (float(i) / float(segments)) * 2.0f * float(M_PI);
+                        float x = radius * cosf(angle);
+                        float z = radius * sinf(angle);
+
+                        vertices.push_back(Vertex{{x, height, z}, {0.0f, 1.0f, 0.0f}, {0.5f + x, 0.5f + z}});
+                }
+
+                // Top indices (triangle fan)
+                for (uint32_t i = 0; i < segments; ++i) {
+                        uint32_t next = (i + 1) % segments;
+                        indices.push_back(top_center_index);
+                        indices.push_back(top_ring_start + i);
+                        indices.push_back(top_ring_start + next);
+                }
+
+                // Side faces
                 for (uint32_t i = 0; i < segments; ++i) {
                         uint32_t next = (i + 1) % segments;
 
-                        veekay::vec3 b0 = vertices[1 + i].position;
-                        veekay::vec3 b1 = vertices[1 + next].position;
+                        float angle0 = (float(i) / float(segments)) * 2.0f * float(M_PI);
+                        float angle1 = (float(next) / float(segments)) * 2.0f * float(M_PI);
 
-                        veekay::vec3 edge0 = b0 - apex;
-                        veekay::vec3 edge1 = b1 - apex;
-                        veekay::vec3 normal = veekay::vec3::normalized(veekay::vec3::cross(edge1, edge0));
+                        float x0 = radius * cosf(angle0);
+                        float z0 = radius * sinf(angle0);
+                        float x1 = radius * cosf(angle1);
+                        float z1 = radius * sinf(angle1);
+
+                        veekay::vec3 normal0 = veekay::vec3::normalized(veekay::vec3{x0, 0.0f, z0});
+                        veekay::vec3 normal1 = veekay::vec3::normalized(veekay::vec3{x1, 0.0f, z1});
 
                         uint32_t start = static_cast<uint32_t>(vertices.size());
-                        vertices.push_back(Vertex{apex, normal, {0.5f, 1.0f}});
-                        vertices.push_back(Vertex{b0, normal, {0.0f, 0.0f}});
-                        vertices.push_back(Vertex{b1, normal, {1.0f, 0.0f}});
+                        vertices.push_back(Vertex{{x0, 0.0f, z0}, normal0, {float(i) / float(segments), 0.0f}});
+                        vertices.push_back(Vertex{{x0, height, z0}, normal0, {float(i) / float(segments), 1.0f}});
+                        vertices.push_back(Vertex{{x1, 0.0f, z1}, normal1, {float(next) / float(segments), 0.0f}});
+                        vertices.push_back(Vertex{{x1, height, z1}, normal1, {float(next) / float(segments), 1.0f}});
 
                         indices.push_back(start);
                         indices.push_back(start + 1);
+                        indices.push_back(start + 3);
+
+                        indices.push_back(start);
+                        indices.push_back(start + 3);
                         indices.push_back(start + 2);
                 }
 
