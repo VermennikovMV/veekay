@@ -518,7 +518,11 @@ void initialize(VkCommandBuffer cmd) {
                 // Base center
                 vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
 
-                // Base ring vertices
+                // Base center and ring vertices
+                const uint32_t base_center_index = static_cast<uint32_t>(vertices.size());
+                vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
+
+                const uint32_t base_ring_start = static_cast<uint32_t>(vertices.size());
                 for (uint32_t i = 0; i < segments; ++i) {
                         float angle = (float(i) / float(segments)) * 2.0f * float(M_PI);
                         float x = radius * cosf(angle);
@@ -530,9 +534,9 @@ void initialize(VkCommandBuffer cmd) {
                 // Base indices (triangle fan)
                 for (uint32_t i = 0; i < segments; ++i) {
                         uint32_t next = (i + 1) % segments;
-                        indices.push_back(0);
-                        indices.push_back(1 + next);
-                        indices.push_back(1 + i);
+                        indices.push_back(base_center_index);
+                        indices.push_back(base_ring_start + next);
+                        indices.push_back(base_ring_start + i);
                 }
 
                 // Top center
