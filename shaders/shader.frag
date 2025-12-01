@@ -46,10 +46,13 @@ vec3 specular = specular_strength * spec * light_color;
 return diffuse + specular;
 }
 
-vec3 calculateDiffuse(vec3 normal, vec3 albedo) {
-vec3 light_dir = normalize(-directional_light.direction_intensity.xyz);
+vec3 calculateDiffuse(vec3 position, vec3 normal, vec3 albedo) {
+vec3 offset = -position;
+float distance = length(offset);
+vec3 light_dir = distance > 0.0f ? offset / distance : vec3(0.0f, 1.0f, 0.0f);
+float attenuation = 1.0f / (1.0f + distance * distance);
 float intensity = max(diffuse_color.w, 0.0f);
-vec3 light_color = diffuse_color.rgb * intensity;
+vec3 light_color = diffuse_color.rgb * intensity * attenuation;
 float diff = max(dot(normal, light_dir), 0.0f);
 return diff * light_color * albedo;
 }
@@ -57,7 +60,7 @@ return diff * light_color * albedo;
 vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir, vec3 albedo, float specular_strength, float shininess) {
 vec3 offset = light.position_intensity.xyz - position;
 float distance = length(offset);
-vec3 light_dir = offset / max(distance, 0.0001f);
+vec3 light_dir = vec3(0.0f, 1.0f, 0.0f);
  float attenuation = light.position_intensity.w / (1.0f + distance * distance);
 vec3 light_color = light.color.rgb * attenuation;
 float diff = max(dot(normal, light_dir), 0.0f);
@@ -78,7 +81,7 @@ uint mode = uint(light_mode.x + 0.5f);
 vec3 color = ambient_color.rgb * albedo;
 
 if (mode == 0u) {
-color += calculateDiffuse(normal, albedo);
+color += calculateDiffuse(f_position, normal, albedo);
 } else if (mode == 1u) {
 color += calculateDirectional(normal, view_dir, albedo, specular_strength, shininess);
 } else if (mode == 2u) {

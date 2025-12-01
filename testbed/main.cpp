@@ -781,22 +781,6 @@ void update(double time) {
         if (light_mode == LightMode::Diffuse) {
                 ImGui::ColorEdit3("Diffuse color", lighting.diffuse_color.elements);
                 ImGui::SliderFloat("Diffuse intensity", &lighting.diffuse_color.w, 0.0f, 2.5f, "%.2f");
-
-                veekay::vec3 diffuse_dir{
-                        lighting.directional_light.direction_intensity.x,
-                        lighting.directional_light.direction_intensity.y,
-                        lighting.directional_light.direction_intensity.z
-                };
-                if (ImGui::SliderFloat3("Diffuse direction", diffuse_dir.elements, -1.0f, 1.0f)) {
-                        float len = veekay::vec3::length(diffuse_dir);
-                        if (len > std::numeric_limits<float>::epsilon()) {
-                                diffuse_dir = diffuse_dir / len;
-                        }
-
-                        lighting.directional_light.direction_intensity.x = diffuse_dir.x;
-                        lighting.directional_light.direction_intensity.y = diffuse_dir.y;
-                        lighting.directional_light.direction_intensity.z = diffuse_dir.z;
-                }
         } else if (light_mode == LightMode::Directional) {
                 ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
 
