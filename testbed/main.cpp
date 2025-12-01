@@ -16,7 +16,6 @@
 namespace {
 
 constexpr uint32_t max_models = 1024;
-constexpr uint32_t max_point_lights = 8;
 
 struct Vertex {
         veekay::vec3 position;
@@ -30,17 +29,10 @@ struct DirectionalLight {
         veekay::vec3 color; float _pad0;
 };
 
-struct PointLight {
-        veekay::vec3 position; float intensity;
-        veekay::vec3 color; float _pad0;
-};
-
 struct SceneUniforms {
         veekay::mat4 view_projection;
         veekay::vec3 camera_position; float ambient_strength;
         DirectionalLight directional_light;
-        uint32_t point_light_count; veekay::vec3 _pad1;
-        PointLight point_lights[max_point_lights];
 };
 
 struct ModelUniforms {
@@ -102,9 +94,8 @@ inline namespace {
 
 std::vector<Model> models;
 
-float ambient_strength = 0.05f;
+float ambient_strength = 0.2f;
 DirectionalLight directional_light{};
-std::vector<PointLight> point_lights;
 }
 
 // NOTE: Vulkan objects
@@ -670,16 +661,8 @@ void initialize(VkCommandBuffer cmd) {
 
         directional_light = DirectionalLight{
                 .direction = veekay::vec3{-0.3f, -1.0f, -0.2f},
-                .intensity = 1.0f,
+                .intensity = 2.5f,
                 .color = veekay::vec3{1.0f, 1.0f, 1.0f},
-        };
-
-        point_lights = {
-                PointLight{
-                        .position = {0.0f, 0.5f, 0.0f},
-                        .intensity = 60.0f,
-                        .color = {1.0f, 0.9f, 0.7f},
-                },
         };
 }
 
@@ -717,18 +700,6 @@ void update(double time) {
                 ImGui::DragFloat3("Direction", &directional_light.direction.x, 0.01f);
                 ImGui::DragFloat("Intensity", &directional_light.intensity, 0.1f, 0.0f, 200.0f, "%.2f");
                 ImGui::ColorEdit3("Color", &directional_light.color.x);
-        }
-
-        if (ImGui::CollapsingHeader("Point lights", ImGuiTreeNodeFlags_DefaultOpen)) {
-                for (size_t i = 0; i < point_lights.size(); ++i) {
-                        ImGui::PushID(static_cast<int>(i));
-                        ImGui::Text("Point %zu", i + 1);
-                        ImGui::DragFloat3("Position", &point_lights[i].position.x, 0.01f);
-                        ImGui::DragFloat("Intensity", &point_lights[i].intensity, 0.1f, 0.0f, 500.0f, "%.2f");
-                        ImGui::ColorEdit3("Color", &point_lights[i].color.x);
-                        ImGui::Separator();
-                        ImGui::PopID();
-                }
         }
 
         ImGui::End();
@@ -776,10 +747,6 @@ void update(double time) {
         scene_uniforms.ambient_strength = ambient_strength;
         scene_uniforms.directional_light = directional_light;
         scene_uniforms.directional_light.direction = veekay::vec3::normalized(scene_uniforms.directional_light.direction);
-        scene_uniforms.point_light_count = static_cast<uint32_t>(std::min(point_lights.size(), static_cast<size_t>(max_point_lights)));
-        for (size_t i = 0; i < scene_uniforms.point_light_count; ++i) {
-                scene_uniforms.point_lights[i] = point_lights[i];
-        }
 
 	std::vector<ModelUniforms> model_uniforms(models.size());
 	for (size_t i = 0, n = models.size(); i < n; ++i) {

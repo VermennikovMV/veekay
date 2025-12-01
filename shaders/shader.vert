@@ -8,8 +8,15 @@ layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
+struct DirectionalLight {
+        vec3 direction; float intensity;
+        vec3 color; float _pad0;
+};
+
 layout (binding = 0, std140) uniform SceneUniforms {
-	mat4 view_projection;
+        mat4 view_projection;
+        vec3 camera_position; float ambient_strength;
+        DirectionalLight directional_light;
 };
 
 layout (binding = 1, std140) uniform ModelUniforms {

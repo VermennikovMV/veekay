@@ -6,15 +6,8 @@ layout (location = 2) in vec2 f_uv;
 
 layout (location = 0) out vec4 final_color;
 
-const uint MAX_POINT_LIGHTS = 8;
-
 struct DirectionalLight {
         vec3 direction; float intensity;
-        vec3 color; float _pad0;
-};
-
-struct PointLight {
-        vec3 position; float intensity;
         vec3 color; float _pad0;
 };
 
@@ -22,8 +15,6 @@ layout (binding = 0, std140) uniform SceneUniforms {
         mat4 view_projection;
         vec3 camera_position; float ambient_strength;
         DirectionalLight directional_light;
-        uint point_light_count; vec3 _pad1;
-        PointLight point_lights[MAX_POINT_LIGHTS];
 } scene;
 
 layout (binding = 1, std140) uniform ModelUniforms {
@@ -44,19 +35,6 @@ void main() {
         float directional_spec = pow(max(dot(normal, directional_halfway), 0.0f), 32.0f);
         color += scene.directional_light.color * scene.directional_light.intensity *
                  (directional_diff * base_color + directional_spec);
-
-        for (uint i = 0; i < scene.point_light_count; ++i) {
-                vec3 light_vector = scene.point_lights[i].position - f_position;
-                float distance_sq = max(dot(light_vector, light_vector), 0.0001f);
-                vec3 light_dir = light_vector * inversesqrt(distance_sq);
-                float attenuation = scene.point_lights[i].intensity / distance_sq;
-
-                float diff = max(dot(normal, light_dir), 0.0f);
-                vec3 halfway_dir = normalize(light_dir + view_direction);
-                float spec = pow(max(dot(normal, halfway_dir), 0.0f), 32.0f);
-
-                color += scene.point_lights[i].color * attenuation * (diff * base_color + spec);
-        }
 
         final_color = vec4(color, 1.0f);
 }
