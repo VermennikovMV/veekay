@@ -552,12 +552,12 @@ void initialize(VkCommandBuffer cmd) {
 		//  |   `--,   |
 		//  |       \  |
 		// (v3)------(v2)
-		std::vector<Vertex> vertices = {
-			{{-5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-			{{5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-		};
+                std::vector<Vertex> vertices = {
+                        {{-5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
 
 		std::vector<uint32_t> indices = {
 			0, 1, 2, 2, 3, 0
@@ -635,26 +635,26 @@ void initialize(VkCommandBuffer cmd) {
 		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
 	});
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {-2.0f, -0.5f, -1.5f},
-		},
-		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
-	});
-
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {1.5f, -0.5f, -0.5f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {-2.0f, 0.5f, -1.5f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
+        });
 
         models.emplace_back(Model{
                 .mesh = cube_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 1.0f},
+                        .position = {1.5f, 0.5f, -0.5f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
+        });
+
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {0.0f, 0.5f, 1.0f},
                 },
                 .albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
         });
