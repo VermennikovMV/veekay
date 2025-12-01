@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <algorithm>
 
 #include <veekay/veekay.hpp>
 
@@ -17,14 +18,21 @@ namespace {
 constexpr uint32_t max_models = 1024;
 
 struct Vertex {
-	veekay::vec3 position;
-	veekay::vec3 normal;
-	veekay::vec2 uv;
-	// NOTE: You can add more attributes
+        veekay::vec3 position;
+        veekay::vec3 normal;
+        veekay::vec2 uv;
+        // NOTE: You can add more attributes
+};
+
+struct DirectionalLight {
+        veekay::vec3 direction; float intensity;
+        veekay::vec3 color; float _pad0;
 };
 
 struct SceneUniforms {
-	veekay::mat4 view_projection;
+        veekay::mat4 view_projection;
+        veekay::vec3 camera_position; float ambient_strength;
+        DirectionalLight directional_light;
 };
 
 struct ModelUniforms {
@@ -54,31 +62,40 @@ struct Model {
 };
 
 struct Camera {
-	constexpr static float default_fov = 60.0f;
-	constexpr static float default_near_plane = 0.01f;
-	constexpr static float default_far_plane = 100.0f;
+        constexpr static float default_fov = 60.0f;
+        constexpr static float default_near_plane = 0.01f;
+        constexpr static float default_far_plane = 100.0f;
 
-	veekay::vec3 position = {};
-	veekay::vec3 rotation = {};
+        veekay::vec3 position = {};
+        veekay::vec3 rotation = {};
 
 	float fov = default_fov;
 	float near_plane = default_near_plane;
 	float far_plane = default_far_plane;
 
-	// NOTE: View matrix of camera (inverse of a transform)
-	veekay::mat4 view() const;
+        // NOTE: View matrix of camera (inverse of a transform)
+        veekay::mat4 view() const;
 
-	// NOTE: View and projection composition
-	veekay::mat4 view_projection(float aspect_ratio) const;
+        // NOTE: View and projection composition
+        veekay::mat4 view_projection(float aspect_ratio) const;
+};
+
+struct CameraAxes {
+        veekay::vec3 front;
+        veekay::vec3 right;
+        veekay::vec3 up;
 };
 
 // NOTE: Scene objects
 inline namespace {
-	Camera camera{
-		.position = {0.0f, -0.5f, -3.0f}
-	};
+        Camera camera{
+                .position = {0.0f, -0.5f, -3.0f}
+        };
 
-	std::vector<Model> models;
+std::vector<Model> models;
+
+float ambient_strength = 0.2f;
+DirectionalLight directional_light{};
 }
 
 // NOTE: Vulkan objects
@@ -107,29 +124,59 @@ inline namespace {
 }
 
 float toRadians(float degrees) {
-	return degrees * float(M_PI) / 180.0f;
+        return degrees * float(M_PI) / 180.0f;
+}
+
+CameraAxes calculateCameraAxes(const Camera& camera) {
+        const float yaw = toRadians(camera.rotation.y);
+        const float pitch = toRadians(camera.rotation.x);
+
+        veekay::vec3 front{
+                cosf(pitch) * sinf(yaw),
+                sinf(pitch),
+                cosf(pitch) * cosf(yaw),
+        };
+
+        front = veekay::vec3::normalized(front);
+
+        const veekay::vec3 world_up{0.0f, 1.0f, 0.0f};
+        veekay::vec3 right = veekay::vec3::normalized(veekay::vec3::cross(front, world_up));
+        veekay::vec3 up = veekay::vec3::cross(right, front);
+
+        return {front, right, up};
 }
 
 veekay::mat4 Transform::matrix() const {
-	// TODO: Scaling and rotation
+        const auto t = veekay::mat4::translation(position);
+        const auto s = veekay::mat4::scaling(scale);
 
-	auto t = veekay::mat4::translation(position);
+        const auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(rotation.x));
+        const auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(rotation.y));
+        const auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(rotation.z));
 
-	return t;
+        return t * (rz * ry * rx) * s;
 }
 
 veekay::mat4 Camera::view() const {
-	// TODO: Rotation
+        const CameraAxes axes = calculateCameraAxes(*this);
 
-	auto t = veekay::mat4::translation(-position);
+        veekay::mat4 view{};
+        view[0][0] = axes.right.x; view[1][0] = axes.right.y; view[2][0] = axes.right.z;
+        view[0][1] = axes.up.x;    view[1][1] = axes.up.y;    view[2][1] = axes.up.z;
+        view[0][2] = -axes.front.x; view[1][2] = -axes.front.y; view[2][2] = -axes.front.z;
+        view[3][3] = 1.0f;
 
-	return t;
+        view[3][0] = -veekay::vec3::dot(axes.right, position);
+        view[3][1] = -veekay::vec3::dot(axes.up, position);
+        view[3][2] = veekay::vec3::dot(axes.front, position);
+
+        return view;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
-	auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
+        auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
 
-	return view() * projection;
+        return projection * view();
 }
 
 // NOTE: Loads shader byte code from file
@@ -242,13 +289,13 @@ void initialize(VkCommandBuffer cmd) {
 		// NOTE: Declare clockwise triangle order as front-facing
 		//       Discard triangles that are facing away
 		//       Fill triangles, don't draw lines instaed
-		VkPipelineRasterizationStateCreateInfo raster_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			.polygonMode = VK_POLYGON_MODE_FILL,
-			.cullMode = VK_CULL_MODE_BACK_BIT,
-			.frontFace = VK_FRONT_FACE_CLOCKWISE,
-			.lineWidth = 1.0f,
-		};
+                VkPipelineRasterizationStateCreateInfo raster_info{
+                        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                        .polygonMode = VK_POLYGON_MODE_FILL,
+                        .cullMode = VK_CULL_MODE_NONE,
+                        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+                        .lineWidth = 1.0f,
+                };
 
 		// NOTE: Use 1 sample per pixel
 		VkPipelineMultisampleStateCreateInfo sample_info{
@@ -505,12 +552,12 @@ void initialize(VkCommandBuffer cmd) {
 		//  |   `--,   |
 		//  |       \  |
 		// (v3)------(v2)
-		std::vector<Vertex> vertices = {
-			{{-5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-			{{5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-			{{-5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-		};
+                std::vector<Vertex> vertices = {
+                        {{-5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
 
 		std::vector<uint32_t> indices = {
 			0, 1, 2, 2, 3, 0
@@ -588,34 +635,40 @@ void initialize(VkCommandBuffer cmd) {
 		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
 	});
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {-2.0f, -0.5f, -1.5f},
-		},
-		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {-2.0f, 0.5f, -1.5f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {1.5f, -0.5f, -0.5f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {1.5f, 0.5f, -0.5f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {0.0f, -0.5f, 1.0f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {0.0f, 0.5f, 1.0f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
+        });
+
+        directional_light = DirectionalLight{
+                .direction = veekay::vec3{-0.3f, -1.0f, -0.2f},
+                .intensity = 2.5f,
+                .color = veekay::vec3{1.0f, 1.0f, 1.0f},
+        };
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
 void shutdown() {
-	VkDevice& device = veekay::app.vk_device;
+        VkDevice& device = veekay::app.vk_device;
 
 	vkDestroySampler(device, missing_texture_sampler, nullptr);
 	delete missing_texture;
@@ -639,48 +692,61 @@ void shutdown() {
 }
 
 void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::End();
+        ImGui::Begin("Lighting");
 
-	if (!ImGui::IsWindowHovered()) {
-		using namespace veekay::input;
+        ImGui::SliderFloat("Ambient", &ambient_strength, 0.0f, 1.0f, "%.3f");
 
-		if (mouse::isButtonDown(mouse::Button::left)) {
-			auto move_delta = mouse::cursorDelta();
+        if (ImGui::CollapsingHeader("Directional light", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat3("Direction", &directional_light.direction.x, 0.01f);
+                ImGui::DragFloat("Intensity", &directional_light.intensity, 0.1f, 0.0f, 200.0f, "%.2f");
+                ImGui::ColorEdit3("Color", &directional_light.color.x);
+        }
 
-			// TODO: Use mouse_delta to update camera rotation
-			
-			auto view = camera.view();
+        ImGui::End();
 
-			// TODO: Calculate right, up and front from view matrix
-			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
-			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
-			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
+        CameraAxes axes = calculateCameraAxes(camera);
 
-			if (keyboard::isKeyDown(keyboard::Key::w))
-				camera.position += front * 0.1f;
+        using namespace veekay::input;
 
-			if (keyboard::isKeyDown(keyboard::Key::s))
-				camera.position -= front * 0.1f;
+        ImGuiIO& io = ImGui::GetIO();
+        const bool allow_mouse = !io.WantCaptureMouse;
+        const bool allow_keyboard = !io.WantCaptureKeyboard;
 
-			if (keyboard::isKeyDown(keyboard::Key::d))
-				camera.position += right * 0.1f;
+        if (allow_mouse && mouse::isButtonDown(mouse::Button::left)) {
+                auto move_delta = mouse::cursorDelta();
 
-			if (keyboard::isKeyDown(keyboard::Key::a))
-				camera.position -= right * 0.1f;
+                camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f, -89.0f, 89.0f);
+                camera.rotation.y += move_delta.x * 0.1f;
+                axes = calculateCameraAxes(camera);
+        }
 
-			if (keyboard::isKeyDown(keyboard::Key::q))
-				camera.position += up * 0.1f;
+        const float move_speed = 0.1f;
 
-			if (keyboard::isKeyDown(keyboard::Key::z))
-				camera.position -= up * 0.1f;
-		}
-	}
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::w))
+                camera.position += axes.front * move_speed;
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::s))
+                camera.position -= axes.front * move_speed;
+
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::d))
+                camera.position += axes.right * move_speed;
+
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::a))
+                camera.position -= axes.right * move_speed;
+
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::q))
+                camera.position += axes.up * move_speed;
+
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::z))
+                camera.position -= axes.up * move_speed;
+
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = camera.position;
+        scene_uniforms.ambient_strength = ambient_strength;
+        scene_uniforms.directional_light = directional_light;
+        scene_uniforms.directional_light.direction = veekay::vec3::normalized(scene_uniforms.directional_light.direction);
 
 	std::vector<ModelUniforms> model_uniforms(models.size());
 	for (size_t i = 0, n = models.size(); i < n; ++i) {
