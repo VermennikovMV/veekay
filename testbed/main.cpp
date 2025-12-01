@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <climits>
 #include <cstring>
+#include <algorithm>
 #include <vector>
 #include <iostream>
 #include <fstream>
@@ -23,13 +24,31 @@ struct Vertex {
 	// NOTE: You can add more attributes
 };
 
-struct SceneUniforms {
-	veekay::mat4 view_projection;
+struct alignas(16) DirectionalLight {
+        veekay::vec3 direction; float intensity;
+        veekay::vec3 color; float _pad0;
 };
 
-struct ModelUniforms {
-	veekay::mat4 model;
-	veekay::vec3 albedo_color; float _pad0;
+struct alignas(16) PointLight {
+        veekay::vec3 position; float intensity;
+        veekay::vec3 color; float radius;
+};
+
+struct alignas(16) SceneUniforms {
+        veekay::mat4 view_projection;
+        veekay::vec3 camera_position; float _pad0;
+        veekay::vec3 ambient_color; float ambient_intensity;
+        DirectionalLight directional_lights[2];
+        PointLight point_lights[4];
+        int32_t directional_light_count;
+        int32_t point_light_count;
+        float _pad1[2];
+};
+
+struct alignas(16) ModelUniforms {
+        veekay::mat4 model;
+        veekay::vec3 albedo_color; float shininess;
+        veekay::vec3 specular_color; float _pad0;
 };
 
 struct Mesh {
@@ -39,18 +58,20 @@ struct Mesh {
 };
 
 struct Transform {
-	veekay::vec3 position = {};
-	veekay::vec3 scale = {1.0f, 1.0f, 1.0f};
-	veekay::vec3 rotation = {};
+        veekay::vec3 position = {};
+        veekay::vec3 scale = {1.0f, 1.0f, 1.0f};
+        veekay::vec3 rotation = {};
 
-	// NOTE: Model matrix (translation, rotation and scaling)
-	veekay::mat4 matrix() const;
+        // NOTE: Model matrix (translation, rotation and scaling)
+        veekay::mat4 matrix() const;
 };
 
 struct Model {
-	Mesh mesh;
-	Transform transform;
-	veekay::vec3 albedo_color;
+        Mesh mesh;
+        Transform transform;
+        veekay::vec3 albedo_color;
+        veekay::vec3 specular_color{1.0f, 1.0f, 1.0f};
+        float shininess = 32.0f;
 };
 
 struct Camera {
@@ -74,11 +95,17 @@ struct Camera {
 
 // NOTE: Scene objects
 inline namespace {
-	Camera camera{
-		.position = {0.0f, -0.5f, -3.0f}
-	};
+        Camera camera{
+                .position = {0.0f, -0.5f, -3.0f}
+        };
 
-	std::vector<Model> models;
+        veekay::vec3 ambient_color{0.15f, 0.15f, 0.15f};
+        float ambient_intensity = 1.0f;
+
+        std::vector<Model> models;
+
+        std::vector<DirectionalLight> directional_lights;
+        std::vector<PointLight> point_lights;
 }
 
 // NOTE: Vulkan objects
@@ -107,29 +134,58 @@ inline namespace {
 }
 
 float toRadians(float degrees) {
-	return degrees * float(M_PI) / 180.0f;
+        return degrees * float(M_PI) / 180.0f;
+}
+
+struct CameraBasis {
+        veekay::vec3 front;
+        veekay::vec3 right;
+        veekay::vec3 up;
+};
+
+CameraBasis calculateCameraBasis(const Camera& camera) {
+        const float yaw = camera.rotation.y;
+        const float pitch = camera.rotation.x;
+
+        veekay::vec3 front{
+                std::cos(yaw) * std::cos(pitch),
+                std::sin(pitch),
+                std::sin(yaw) * std::cos(pitch)
+        };
+        front = veekay::vec3::normalized(front);
+
+        const veekay::vec3 world_up{0.0f, 1.0f, 0.0f};
+        veekay::vec3 right = veekay::vec3::normalized(veekay::vec3::cross(front, world_up));
+        veekay::vec3 up = veekay::vec3::cross(right, front);
+
+        return {front, right, up};
 }
 
 veekay::mat4 Transform::matrix() const {
-	// TODO: Scaling and rotation
+        auto t = veekay::mat4::translation(position);
+        auto s = veekay::mat4::scaling(scale);
 
-	auto t = veekay::mat4::translation(position);
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, rotation.x);
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, rotation.y);
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, rotation.z);
 
-	return t;
+        return t * rz * ry * rx * s;
 }
 
 veekay::mat4 Camera::view() const {
-	// TODO: Rotation
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, -rotation.x);
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, -rotation.y);
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, -rotation.z);
 
-	auto t = veekay::mat4::translation(-position);
+        auto t = veekay::mat4::translation(-position);
 
-	return t;
+        return rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
-	auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
+        auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
 
-	return view() * projection;
+        return projection * view();
 }
 
 // NOTE: Loads shader byte code from file
@@ -582,35 +638,63 @@ void initialize(VkCommandBuffer cmd) {
 	}
 
 	// NOTE: Add models to scene
-	models.emplace_back(Model{
-		.mesh = plane_mesh,
-		.transform = Transform{},
-		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = plane_mesh,
+                .transform = Transform{},
+                .albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f},
+                .specular_color = veekay::vec3{0.2f, 0.2f, 0.2f},
+                .shininess = 8.0f,
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {-2.0f, -0.5f, -1.5f},
-		},
-		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {-2.0f, -0.5f, -1.5f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f},
+                .specular_color = veekay::vec3{1.0f, 0.5f, 0.5f},
+                .shininess = 64.0f,
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {1.5f, -0.5f, -0.5f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {1.5f, -0.5f, -0.5f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f},
+                .specular_color = veekay::vec3{0.6f, 1.0f, 0.6f},
+                .shininess = 32.0f,
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {0.0f, -0.5f, 1.0f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 1.0f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f},
+                .specular_color = veekay::vec3{0.6f, 0.6f, 1.0f},
+                .shininess = 24.0f,
+        });
+
+        directional_lights.push_back({
+                .direction = veekay::vec3{-0.3f, -1.0f, -0.25f},
+                .intensity = 1.0f,
+                .color = veekay::vec3{1.0f, 1.0f, 1.0f},
+        });
+
+        point_lights.push_back({
+                .position = veekay::vec3{-1.5f, 0.5f, -0.5f},
+                .intensity = 10.0f,
+                .color = veekay::vec3{1.0f, 0.8f, 0.6f},
+                .radius = 3.0f,
+        });
+
+        point_lights.push_back({
+                .position = veekay::vec3{2.0f, 0.25f, -1.5f},
+                .intensity = 12.0f,
+                .color = veekay::vec3{0.6f, 0.8f, 1.0f},
+                .radius = 2.5f,
+        });
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
@@ -639,69 +723,115 @@ void shutdown() {
 }
 
 void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::End();
+        static float move_speed = 0.05f;
+        static float look_sensitivity = 0.0025f;
 
-	if (!ImGui::IsWindowHovered()) {
-		using namespace veekay::input;
+        ImGui::Begin("Controls:");
+        ImGui::Text("WASD + Q/Z to move, hold LMB to rotate camera");
+        ImGui::SliderFloat("Move speed", &move_speed, 0.01f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Look sensitivity", &look_sensitivity, 0.0005f, 0.01f, "%.4f");
+        ImGui::Separator();
+        ImGui::ColorEdit3("Ambient color", &ambient_color.x);
+        ImGui::SliderFloat("Ambient intensity", &ambient_intensity, 0.0f, 2.0f);
 
-		if (mouse::isButtonDown(mouse::Button::left)) {
-			auto move_delta = mouse::cursorDelta();
+        for (size_t i = 0; i < directional_lights.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::Text("Directional light %zu", i);
+                ImGui::DragFloat3("Direction", &directional_lights[i].direction.x, 0.01f);
+                ImGui::ColorEdit3("Color", &directional_lights[i].color.x);
+                ImGui::SliderFloat("Intensity", &directional_lights[i].intensity, 0.0f, 2.0f);
+                ImGui::PopID();
+        }
 
-			// TODO: Use mouse_delta to update camera rotation
-			
-			auto view = camera.view();
+        for (size_t i = 0; i < point_lights.size(); ++i) {
+                ImGui::PushID(static_cast<int>(100 + i));
+                ImGui::Text("Point light %zu", i);
+                ImGui::DragFloat3("Position", &point_lights[i].position.x, 0.01f);
+                ImGui::ColorEdit3("PL Color", &point_lights[i].color.x);
+                ImGui::SliderFloat("PL Intensity", &point_lights[i].intensity, 0.0f, 20.0f);
+                ImGui::SliderFloat("Radius", &point_lights[i].radius, 0.1f, 10.0f);
+                ImGui::PopID();
+        }
+        ImGui::End();
 
-			// TODO: Calculate right, up and front from view matrix
-			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
-			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
-			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
+        const bool want_capture_mouse = ImGui::GetIO().WantCaptureMouse;
 
-			if (keyboard::isKeyDown(keyboard::Key::w))
-				camera.position += front * 0.1f;
+        using namespace veekay::input;
 
-			if (keyboard::isKeyDown(keyboard::Key::s))
-				camera.position -= front * 0.1f;
+        if (!want_capture_mouse && mouse::isButtonDown(mouse::Button::left)) {
+                mouse::setCaptured(true);
+                auto move_delta = mouse::cursorDelta();
 
-			if (keyboard::isKeyDown(keyboard::Key::d))
-				camera.position += right * 0.1f;
+                camera.rotation.y -= move_delta.x * look_sensitivity;
+                camera.rotation.x -= move_delta.y * look_sensitivity;
+                camera.rotation.x = std::clamp(camera.rotation.x, -1.5f, 1.5f);
+        } else {
+                mouse::setCaptured(false);
+        }
 
-			if (keyboard::isKeyDown(keyboard::Key::a))
-				camera.position -= right * 0.1f;
+        CameraBasis basis = calculateCameraBasis(camera);
 
-			if (keyboard::isKeyDown(keyboard::Key::q))
-				camera.position += up * 0.1f;
+        if (!ImGui::GetIO().WantCaptureKeyboard()) {
+                float speed = move_speed;
 
-			if (keyboard::isKeyDown(keyboard::Key::z))
-				camera.position -= up * 0.1f;
-		}
-	}
+                if (keyboard::isKeyDown(keyboard::Key::w))
+                        camera.position += basis.front * speed;
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
+                if (keyboard::isKeyDown(keyboard::Key::s))
+                        camera.position -= basis.front * speed;
 
-	std::vector<ModelUniforms> model_uniforms(models.size());
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		ModelUniforms& uniforms = model_uniforms[i];
+                if (keyboard::isKeyDown(keyboard::Key::d))
+                        camera.position += basis.right * speed;
 
-		uniforms.model = model.transform.matrix();
-		uniforms.albedo_color = model.albedo_color;
-	}
+                if (keyboard::isKeyDown(keyboard::Key::a))
+                        camera.position -= basis.right * speed;
 
-	*(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+                if (keyboard::isKeyDown(keyboard::Key::q))
+                        camera.position += basis.up * speed;
 
-	const size_t alignment =
-		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+                if (keyboard::isKeyDown(keyboard::Key::z))
+                        camera.position -= basis.up * speed;
+        }
 
-	for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
-		const ModelUniforms& uniforms = model_uniforms[i];
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = camera.position;
+        scene_uniforms.ambient_color = ambient_color;
+        scene_uniforms.ambient_intensity = ambient_intensity;
 
-		char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
-		*reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
-	}
+        const int dir_count = std::min<int>(directional_lights.size(), 2);
+        for (int i = 0; i < dir_count; ++i)
+                scene_uniforms.directional_lights[i] = directional_lights[i];
+        scene_uniforms.directional_light_count = dir_count;
+
+        const int pt_count = std::min<int>(point_lights.size(), 4);
+        for (int i = 0; i < pt_count; ++i)
+                scene_uniforms.point_lights[i] = point_lights[i];
+        scene_uniforms.point_light_count = pt_count;
+
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
+
+                uniforms.model = model.transform.matrix();
+                uniforms.albedo_color = model.albedo_color;
+                uniforms.specular_color = model.specular_color;
+                uniforms.shininess = model.shininess;
+        }
+
+        *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        const size_t alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+        for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+                const ModelUniforms& uniforms = model_uniforms[i];
+
+                char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+                *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+        }
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {

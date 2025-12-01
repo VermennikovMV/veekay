@@ -8,13 +8,31 @@ layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
+struct DirectionalLight {
+        vec3 direction; float intensity;
+        vec3 color; float _pad0;
+};
+
+struct PointLight {
+        vec3 position; float intensity;
+        vec3 color; float radius;
+};
+
 layout (binding = 0, std140) uniform SceneUniforms {
-	mat4 view_projection;
+        mat4 view_projection;
+        vec3 camera_position; float _pad0;
+        vec3 ambient_color; float ambient_intensity;
+        DirectionalLight directional_lights[2];
+        PointLight point_lights[4];
+        int directional_light_count;
+        int point_light_count;
+        vec2 _pad1;
 };
 
 layout (binding = 1, std140) uniform ModelUniforms {
-	mat4 model;
-	vec3 albedo_color;
+        mat4 model;
+        vec3 albedo_color; float shininess;
+        vec3 specular_color; float _pad0;
 };
 
 void main() {
