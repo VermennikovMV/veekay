@@ -48,6 +48,7 @@ struct SceneUniforms {
         veekay::mat4 view_projection;
         veekay::vec4 camera_position;
         veekay::vec4 ambient_color;
+        veekay::vec4 diffuse_color;
         veekay::vec4 light_mode;
         DirectionalLight directional_light;
         veekay::vec4 point_light_count;
@@ -114,6 +115,7 @@ inline namespace {
 
         struct LightingState {
                 veekay::vec4 ambient_color;
+                veekay::vec4 diffuse_color;
                 DirectionalLight directional_light;
                 std::array<PointLight, max_point_lights> point_lights;
                 uint32_t point_light_count;
@@ -123,13 +125,14 @@ inline namespace {
                 LightingState state{};
                 const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
                 state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
+                state.diffuse_color = veekay::vec4{1.0f, 0.95f, 0.9f, 0.8f};
                 state.directional_light = DirectionalLight{
                         .direction_intensity = veekay::vec4{dir.x, dir.y, dir.z, 1.0f},
                         .color = veekay::vec4{1.0f, 0.95f, 0.9f, 1.0f},
                 };
                 state.point_lights = {
                         PointLight{
-                                .position_intensity = veekay::vec4{0.0f, 0.0f, 0.0f, 32.0f},
+                                .position_intensity = veekay::vec4{0.0f, 0.0f, 0.0f, 8.0f},
                                 .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
                         },
                         PointLight{},
@@ -700,6 +703,7 @@ void initialize(VkCommandBuffer cmd) {
         scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
         scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
         scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.diffuse_color = lighting.diffuse_color;
 
         int mode_index = static_cast<int>(light_mode);
         scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
@@ -774,7 +778,10 @@ void update(double time) {
                 light_mode = static_cast<LightMode>(mode_index);
         }
 
-        if (light_mode == LightMode::Directional) {
+        if (light_mode == LightMode::Diffuse) {
+                ImGui::ColorEdit3("Diffuse color", lighting.diffuse_color.elements);
+                ImGui::SliderFloat("Diffuse intensity", &lighting.diffuse_color.w, 0.0f, 2.5f, "%.2f");
+        } else if (light_mode == LightMode::Directional) {
                 ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
 
                 veekay::vec3 directional_dir{
@@ -794,7 +801,7 @@ void update(double time) {
                 }
         } else if (light_mode == LightMode::Point) {
                 ImGui::ColorEdit3("Point light color", lighting.point_lights[0].color.elements);
-                ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 80.0f, "%.1f");
+                ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 40.0f, "%.1f");
         }
         ImGui::End();
 
@@ -864,6 +871,7 @@ void update(double time) {
         scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
         scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
         scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.diffuse_color = lighting.diffuse_color;
         scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
         scene_uniforms.directional_light = lighting.directional_light;
 

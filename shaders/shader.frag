@@ -22,6 +22,7 @@ layout (binding = 0, std140) uniform SceneUniforms {
 mat4 view_projection;
 vec4 camera_position;
 vec4 ambient_color;
+vec4 diffuse_color;
 vec4 light_mode;
 DirectionalLight directional_light;
 vec4 point_light_count;
@@ -49,7 +50,7 @@ vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir,
 vec3 offset = light.position_intensity.xyz - position;
 float distance = length(offset);
 vec3 light_dir = offset / max(distance, 0.0001f);
-float attenuation = light.position_intensity.w / max(distance * distance, 0.0001f);
+ float attenuation = light.position_intensity.w / (1.0f + distance * distance);
 vec3 light_color = light.color.rgb * attenuation;
 float diff = max(dot(normal, light_dir), 0.0f);
 vec3 diffuse = diff * light_color * albedo;
@@ -68,7 +69,9 @@ vec3 view_dir = normalize(camera_position.xyz - f_position);
 uint mode = uint(light_mode.x + 0.5f);
 vec3 color = ambient_color.rgb * albedo;
 
-if (mode == 1u) {
+if (mode == 0u) {
+color += diffuse_color.rgb * diffuse_color.w * albedo;
+} else if (mode == 1u) {
 color += calculateDirectional(normal, view_dir, albedo, specular_strength, shininess);
 } else if (mode == 2u) {
 uint count = min(uint(point_light_count.x), MAX_POINT_LIGHTS);

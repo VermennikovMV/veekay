@@ -24,6 +24,7 @@ layout (binding = 0, std140) uniform SceneUniforms {
 mat4 view_projection;
 vec4 camera_position;
 vec4 ambient_color;
+vec4 diffuse_color;
 vec4 light_mode;
 DirectionalLight directional_light;
 vec4 point_light_count;
