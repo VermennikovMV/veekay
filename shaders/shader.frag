@@ -8,23 +8,27 @@ layout (location = 0) out vec4 final_color;
 
 const uint MAX_POINT_LIGHTS = 8;
 
+struct DirectionalLight {
+        vec3 direction; float intensity;
+        vec3 color; float _pad0;
+};
+
+struct PointLight {
+        vec3 position; float intensity;
+        vec3 color; float _pad0;
+};
+
 layout (binding = 0, std140) uniform SceneUniforms {
         mat4 view_projection;
         vec3 camera_position; float ambient_strength;
-        struct {
-                vec3 direction; float intensity;
-                vec3 color; float _pad0;
-        } directional_light;
+        DirectionalLight directional_light;
         uint point_light_count; vec3 _pad1;
-        struct {
-                vec3 position; float intensity;
-                vec3 color; float _pad0;
-        } point_lights[MAX_POINT_LIGHTS];
+        PointLight point_lights[MAX_POINT_LIGHTS];
 } scene;
 
 layout (binding = 1, std140) uniform ModelUniforms {
         mat4 model;
-        vec3 albedo_color;
+        vec3 albedo_color; float _pad0;
 };
 
 void main() {

@@ -13,8 +13,8 @@ layout (binding = 0, std140) uniform SceneUniforms {
 };
 
 layout (binding = 1, std140) uniform ModelUniforms {
-	mat4 model;
-	vec3 albedo_color;
+        mat4 model;
+        vec3 albedo_color; float _pad0;
 };
 
 void main() {
