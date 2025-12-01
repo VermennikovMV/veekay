@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <algorithm>
 
 #include <veekay/veekay.hpp>
 
@@ -15,16 +16,31 @@
 namespace {
 
 constexpr uint32_t max_models = 1024;
+constexpr uint32_t max_point_lights = 8;
 
 struct Vertex {
-	veekay::vec3 position;
-	veekay::vec3 normal;
-	veekay::vec2 uv;
-	// NOTE: You can add more attributes
+        veekay::vec3 position;
+        veekay::vec3 normal;
+        veekay::vec2 uv;
+        // NOTE: You can add more attributes
+};
+
+struct DirectionalLight {
+        veekay::vec3 direction; float intensity;
+        veekay::vec3 color; float _pad0;
+};
+
+struct PointLight {
+        veekay::vec3 position; float intensity;
+        veekay::vec3 color; float _pad0;
 };
 
 struct SceneUniforms {
-	veekay::mat4 view_projection;
+        veekay::mat4 view_projection;
+        veekay::vec3 camera_position; float ambient_strength;
+        DirectionalLight directional_light;
+        uint32_t point_light_count; veekay::vec3 _pad1;
+        PointLight point_lights[max_point_lights];
 };
 
 struct ModelUniforms {
@@ -54,31 +70,41 @@ struct Model {
 };
 
 struct Camera {
-	constexpr static float default_fov = 60.0f;
-	constexpr static float default_near_plane = 0.01f;
-	constexpr static float default_far_plane = 100.0f;
+        constexpr static float default_fov = 60.0f;
+        constexpr static float default_near_plane = 0.01f;
+        constexpr static float default_far_plane = 100.0f;
 
-	veekay::vec3 position = {};
-	veekay::vec3 rotation = {};
+        veekay::vec3 position = {};
+        veekay::vec3 rotation = {};
 
 	float fov = default_fov;
 	float near_plane = default_near_plane;
 	float far_plane = default_far_plane;
 
-	// NOTE: View matrix of camera (inverse of a transform)
-	veekay::mat4 view() const;
+        // NOTE: View matrix of camera (inverse of a transform)
+        veekay::mat4 view() const;
 
-	// NOTE: View and projection composition
-	veekay::mat4 view_projection(float aspect_ratio) const;
+        // NOTE: View and projection composition
+        veekay::mat4 view_projection(float aspect_ratio) const;
+};
+
+struct CameraAxes {
+        veekay::vec3 front;
+        veekay::vec3 right;
+        veekay::vec3 up;
 };
 
 // NOTE: Scene objects
 inline namespace {
-	Camera camera{
-		.position = {0.0f, -0.5f, -3.0f}
-	};
+        Camera camera{
+                .position = {0.0f, -0.5f, -3.0f}
+        };
 
-	std::vector<Model> models;
+std::vector<Model> models;
+
+float ambient_strength = 0.05f;
+DirectionalLight directional_light{};
+std::vector<PointLight> point_lights;
 }
 
 // NOTE: Vulkan objects
@@ -107,29 +133,59 @@ inline namespace {
 }
 
 float toRadians(float degrees) {
-	return degrees * float(M_PI) / 180.0f;
+        return degrees * float(M_PI) / 180.0f;
+}
+
+CameraAxes calculateCameraAxes(const Camera& camera) {
+        const float yaw = toRadians(camera.rotation.y);
+        const float pitch = toRadians(camera.rotation.x);
+
+        veekay::vec3 front{
+                cosf(pitch) * sinf(yaw),
+                sinf(pitch),
+                cosf(pitch) * cosf(yaw),
+        };
+
+        front = veekay::vec3::normalized(front);
+
+        const veekay::vec3 world_up{0.0f, 1.0f, 0.0f};
+        veekay::vec3 right = veekay::vec3::normalized(veekay::vec3::cross(front, world_up));
+        veekay::vec3 up = veekay::vec3::cross(right, front);
+
+        return {front, right, up};
 }
 
 veekay::mat4 Transform::matrix() const {
-	// TODO: Scaling and rotation
+        const auto t = veekay::mat4::translation(position);
+        const auto s = veekay::mat4::scaling(scale);
 
-	auto t = veekay::mat4::translation(position);
+        const auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(rotation.x));
+        const auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(rotation.y));
+        const auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(rotation.z));
 
-	return t;
+        return t * (rz * ry * rx) * s;
 }
 
 veekay::mat4 Camera::view() const {
-	// TODO: Rotation
+        const CameraAxes axes = calculateCameraAxes(*this);
 
-	auto t = veekay::mat4::translation(-position);
+        veekay::mat4 view{};
+        view[0][0] = axes.right.x; view[1][0] = axes.right.y; view[2][0] = axes.right.z;
+        view[0][1] = axes.up.x;    view[1][1] = axes.up.y;    view[2][1] = axes.up.z;
+        view[0][2] = -axes.front.x; view[1][2] = -axes.front.y; view[2][2] = -axes.front.z;
+        view[3][3] = 1.0f;
 
-	return t;
+        view[3][0] = -veekay::vec3::dot(axes.right, position);
+        view[3][1] = -veekay::vec3::dot(axes.up, position);
+        view[3][2] = veekay::vec3::dot(axes.front, position);
+
+        return view;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
-	auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
+        auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
 
-	return view() * projection;
+        return projection * view();
 }
 
 // NOTE: Loads shader byte code from file
@@ -604,18 +660,37 @@ void initialize(VkCommandBuffer cmd) {
 		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
 	});
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {0.0f, -0.5f, 1.0f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 1.0f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
+        });
+
+        directional_light = DirectionalLight{
+                .direction = veekay::vec3{-0.3f, -1.0f, -0.2f},
+                .intensity = 1.0f,
+                .color = veekay::vec3{1.0f, 1.0f, 1.0f},
+        };
+
+        point_lights = {
+                PointLight{
+                        .position = {2.0f, 0.5f, 2.0f},
+                        .intensity = 50.0f,
+                        .color = {1.0f, 0.7f, 0.5f},
+                },
+                PointLight{
+                        .position = {-1.5f, 0.2f, 1.0f},
+                        .intensity = 30.0f,
+                        .color = {0.5f, 0.8f, 1.0f},
+                },
+        };
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
 void shutdown() {
-	VkDevice& device = veekay::app.vk_device;
+        VkDevice& device = veekay::app.vk_device;
 
 	vkDestroySampler(device, missing_texture_sampler, nullptr);
 	delete missing_texture;
@@ -639,48 +714,86 @@ void shutdown() {
 }
 
 void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::End();
+        CameraAxes axes = calculateCameraAxes(camera);
 
-	if (!ImGui::IsWindowHovered()) {
-		using namespace veekay::input;
+        ImGui::Begin("Controls:");
+        ImGui::Text("Camera");
+        ImGui::DragFloat3("Position", &camera.position.x, 0.05f);
+        ImGui::DragFloat3("Rotation", &camera.rotation.x, 0.1f);
 
-		if (mouse::isButtonDown(mouse::Button::left)) {
-			auto move_delta = mouse::cursorDelta();
+        ImGui::Separator();
+        ImGui::Text("Lighting");
+        ImGui::SliderFloat("Ambient", &ambient_strength, 0.0f, 0.5f);
+        ImGui::DragFloat3("Directional direction", &directional_light.direction.x, 0.01f);
+        ImGui::ColorEdit3("Directional color", &directional_light.color.x);
+        ImGui::DragFloat("Directional intensity", &directional_light.intensity, 0.01f, 0.0f, 10.0f);
 
-			// TODO: Use mouse_delta to update camera rotation
-			
-			auto view = camera.view();
+        if (ImGui::Button("Add point light") && point_lights.size() < max_point_lights) {
+                point_lights.push_back(PointLight{
+                        .position = camera.position + axes.front * 2.0f,
+                        .intensity = 25.0f,
+                        .color = {1.0f, 1.0f, 1.0f},
+                });
+        }
 
-			// TODO: Calculate right, up and front from view matrix
-			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
-			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
-			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
+        for (size_t i = 0; i < point_lights.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::DragFloat3("Position", &point_lights[i].position.x, 0.05f);
+                ImGui::ColorEdit3("Color", &point_lights[i].color.x);
+                ImGui::DragFloat("Intensity", &point_lights[i].intensity, 0.1f, 0.0f, 200.0f);
+                if (ImGui::Button("Remove")) {
+                        point_lights.erase(point_lights.begin() + i);
+                        ImGui::PopID();
+                        break;
+                }
+                ImGui::Separator();
+                ImGui::PopID();
+        }
+        ImGui::End();
 
-			if (keyboard::isKeyDown(keyboard::Key::w))
-				camera.position += front * 0.1f;
+        axes = calculateCameraAxes(camera);
 
-			if (keyboard::isKeyDown(keyboard::Key::s))
-				camera.position -= front * 0.1f;
+        if (!ImGui::IsWindowHovered()) {
+                using namespace veekay::input;
 
-			if (keyboard::isKeyDown(keyboard::Key::d))
-				camera.position += right * 0.1f;
+                if (mouse::isButtonDown(mouse::Button::left)) {
+                        auto move_delta = mouse::cursorDelta();
 
-			if (keyboard::isKeyDown(keyboard::Key::a))
-				camera.position -= right * 0.1f;
+                        camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f, -89.0f, 89.0f);
+                        camera.rotation.y += move_delta.x * 0.1f;
+                        axes = calculateCameraAxes(camera);
 
-			if (keyboard::isKeyDown(keyboard::Key::q))
-				camera.position += up * 0.1f;
+                        if (keyboard::isKeyDown(keyboard::Key::w))
+                                camera.position += axes.front * 0.1f;
 
-			if (keyboard::isKeyDown(keyboard::Key::z))
-				camera.position -= up * 0.1f;
-		}
-	}
+                        if (keyboard::isKeyDown(keyboard::Key::s))
+                                camera.position -= axes.front * 0.1f;
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
+                        if (keyboard::isKeyDown(keyboard::Key::d))
+                                camera.position += axes.right * 0.1f;
+
+                        if (keyboard::isKeyDown(keyboard::Key::a))
+                                camera.position -= axes.right * 0.1f;
+
+                        if (keyboard::isKeyDown(keyboard::Key::q))
+                                camera.position += axes.up * 0.1f;
+
+                        if (keyboard::isKeyDown(keyboard::Key::z))
+                                camera.position -= axes.up * 0.1f;
+                }
+        }
+
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = camera.position;
+        scene_uniforms.ambient_strength = ambient_strength;
+        scene_uniforms.directional_light = directional_light;
+        scene_uniforms.directional_light.direction = veekay::vec3::normalized(scene_uniforms.directional_light.direction);
+        scene_uniforms.point_light_count = static_cast<uint32_t>(std::min(point_lights.size(), static_cast<size_t>(max_point_lights)));
+        for (size_t i = 0; i < scene_uniforms.point_light_count; ++i) {
+                scene_uniforms.point_lights[i] = point_lights[i];
+        }
 
 	std::vector<ModelUniforms> model_uniforms(models.size());
 	for (size_t i = 0, n = models.size(); i < n; ++i) {
