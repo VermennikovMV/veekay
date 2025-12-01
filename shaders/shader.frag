@@ -58,10 +58,10 @@ return diff * light_color * albedo;
 }
 
 vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir, vec3 albedo, float specular_strength, float shininess) {
-vec3 offset = light.position_intensity.xyz - position;
+vec3 offset = -position; // stick to scene center like diffuse light
 float distance = length(offset);
 vec3 light_dir = vec3(0.0f, 1.0f, 0.0f);
- float attenuation = light.position_intensity.w / (1.0f + distance * distance);
+float attenuation = light.position_intensity.w / (1.0f + distance * distance);
 vec3 light_color = light.color.rgb * attenuation;
 float diff = max(dot(normal, light_dir), 0.0f);
 vec3 diffuse = diff * light_color * albedo;
