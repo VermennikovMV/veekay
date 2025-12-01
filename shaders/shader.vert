@@ -8,24 +8,24 @@ layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
+struct DirectionalLight {
+        vec4 direction; // .w stores intensity
+        vec4 color;
+};
+
+struct PointLight {
+        vec4 position; // .w stores intensity
+        vec4 color;
+};
+
 layout (binding = 0, std140) uniform SceneUniforms {
         mat4 view_projection;
         vec4 camera_position;
         vec4 ambient_color;
 
-        struct DirectionalLight {
-                vec4 direction; // .w stores intensity
-                vec4 color;
-        };
-
         DirectionalLight directional_light;
         uint point_light_count;
         vec3 _pad0;
-
-        struct PointLight {
-                vec4 position; // .w stores intensity
-                vec4 color;
-        };
 
         PointLight point_lights[4];
 };
