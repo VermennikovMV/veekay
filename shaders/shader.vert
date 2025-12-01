@@ -8,15 +8,17 @@ layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
+struct PointLight {
+        vec3 position; float intensity;
+        vec3 color; float _pad0;
+};
+
 layout (binding = 0, std140) uniform SceneUniforms {
         mat4 view_projection;
         vec3 camera_position; float ambient_strength;
         vec3 directional_direction; float directional_intensity;
         vec3 directional_color; float _pad1;
-        struct PointLight {
-                vec3 position; float intensity;
-                vec3 color; float _pad0;
-        } point_lights[4];
+        PointLight point_lights[4];
         uint point_light_count; vec3 _pad2;
 };
 
