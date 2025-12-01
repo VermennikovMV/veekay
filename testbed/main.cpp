@@ -146,6 +146,10 @@ inline namespace {
         float camera_sensitivity = 0.08f;
 }
 
+float toRadians(float degrees) {
+        return degrees * float(M_PI) / 180.0f;
+}
+
 veekay::vec3 forwardFromRotation(const veekay::vec3& rotation) {
         const float pitch = toRadians(rotation.x);
         const float yaw = toRadians(rotation.y);
@@ -199,10 +203,6 @@ inline namespace {
 
 	veekay::graphics::Texture* texture;
 	VkSampler texture_sampler;
-}
-
-float toRadians(float degrees) {
-	return degrees * float(M_PI) / 180.0f;
 }
 
 veekay::mat4 Transform::matrix() const {
