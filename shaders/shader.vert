@@ -9,7 +9,25 @@ layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
 
 layout (binding = 0, std140) uniform SceneUniforms {
-	mat4 view_projection;
+        mat4 view_projection;
+        vec4 camera_position;
+        vec4 ambient_color;
+
+        struct DirectionalLight {
+                vec4 direction; // .w stores intensity
+                vec4 color;
+        };
+
+        DirectionalLight directional_light;
+        uint point_light_count;
+        vec3 _pad0;
+
+        struct PointLight {
+                vec4 position; // .w stores intensity
+                vec4 color;
+        };
+
+        PointLight point_lights[4];
 };
 
 layout (binding = 1, std140) uniform ModelUniforms {
@@ -18,12 +36,12 @@ layout (binding = 1, std140) uniform ModelUniforms {
 };
 
 void main() {
-	vec4 position = model * vec4(v_position, 1.0f);
-	vec4 normal = model * vec4(v_normal, 0.0f);
+        vec4 position = model * vec4(v_position, 1.0f);
+        vec3 normal = mat3(transpose(inverse(model))) * v_normal;
 
-	gl_Position = view_projection * position;
+        gl_Position = view_projection * position;
 
-	f_position = position.xyz;
-	f_normal = normal.xyz;
-	f_uv = v_uv;
+        f_position = position.xyz;
+        f_normal = normal;
+        f_uv = v_uv;
 }
