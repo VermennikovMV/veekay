@@ -10,7 +10,6 @@
 #include <veekay/veekay.hpp>
 
 #include <vulkan/vulkan_core.h>
-#include <imgui.h>
 #include <lodepng.h>
 
 namespace {
@@ -298,13 +297,13 @@ void initialize(VkCommandBuffer cmd) {
 		// NOTE: Declare clockwise triangle order as front-facing
 		//       Discard triangles that are facing away
 		//       Fill triangles, don't draw lines instaed
-		VkPipelineRasterizationStateCreateInfo raster_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			.polygonMode = VK_POLYGON_MODE_FILL,
-			.cullMode = VK_CULL_MODE_BACK_BIT,
-			.frontFace = VK_FRONT_FACE_CLOCKWISE,
-			.lineWidth = 1.0f,
-		};
+                VkPipelineRasterizationStateCreateInfo raster_info{
+                        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                        .polygonMode = VK_POLYGON_MODE_FILL,
+                        .cullMode = VK_CULL_MODE_NONE,
+                        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+                        .lineWidth = 1.0f,
+                };
 
 		// NOTE: Use 1 sample per pixel
 		VkPipelineMultisampleStateCreateInfo sample_info{
@@ -716,72 +715,35 @@ void shutdown() {
 void update(double time) {
         CameraAxes axes = calculateCameraAxes(camera);
 
-        ImGui::Begin("Controls:");
-        ImGui::Text("Camera");
-        ImGui::DragFloat3("Position", &camera.position.x, 0.05f);
-        ImGui::DragFloat3("Rotation", &camera.rotation.x, 0.1f);
+        using namespace veekay::input;
 
-        ImGui::Separator();
-        ImGui::Text("Lighting");
-        ImGui::SliderFloat("Ambient", &ambient_strength, 0.0f, 0.5f);
-        ImGui::DragFloat3("Directional direction", &directional_light.direction.x, 0.01f);
-        ImGui::ColorEdit3("Directional color", &directional_light.color.x);
-        ImGui::DragFloat("Directional intensity", &directional_light.intensity, 0.01f, 0.0f, 10.0f);
+        if (mouse::isButtonDown(mouse::Button::left)) {
+                auto move_delta = mouse::cursorDelta();
 
-        if (ImGui::Button("Add point light") && point_lights.size() < max_point_lights) {
-                point_lights.push_back(PointLight{
-                        .position = camera.position + axes.front * 2.0f,
-                        .intensity = 25.0f,
-                        .color = {1.0f, 1.0f, 1.0f},
-                });
+                camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f, -89.0f, 89.0f);
+                camera.rotation.y += move_delta.x * 0.1f;
+                axes = calculateCameraAxes(camera);
         }
 
-        for (size_t i = 0; i < point_lights.size(); ++i) {
-                ImGui::PushID(static_cast<int>(i));
-                ImGui::DragFloat3("Position", &point_lights[i].position.x, 0.05f);
-                ImGui::ColorEdit3("Color", &point_lights[i].color.x);
-                ImGui::DragFloat("Intensity", &point_lights[i].intensity, 0.1f, 0.0f, 200.0f);
-                if (ImGui::Button("Remove")) {
-                        point_lights.erase(point_lights.begin() + i);
-                        ImGui::PopID();
-                        break;
-                }
-                ImGui::Separator();
-                ImGui::PopID();
-        }
-        ImGui::End();
+        const float move_speed = 0.1f;
 
-        axes = calculateCameraAxes(camera);
+        if (keyboard::isKeyDown(keyboard::Key::w))
+                camera.position += axes.front * move_speed;
 
-        if (!ImGui::IsWindowHovered()) {
-                using namespace veekay::input;
+        if (keyboard::isKeyDown(keyboard::Key::s))
+                camera.position -= axes.front * move_speed;
 
-                if (mouse::isButtonDown(mouse::Button::left)) {
-                        auto move_delta = mouse::cursorDelta();
+        if (keyboard::isKeyDown(keyboard::Key::d))
+                camera.position += axes.right * move_speed;
 
-                        camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f, -89.0f, 89.0f);
-                        camera.rotation.y += move_delta.x * 0.1f;
-                        axes = calculateCameraAxes(camera);
+        if (keyboard::isKeyDown(keyboard::Key::a))
+                camera.position -= axes.right * move_speed;
 
-                        if (keyboard::isKeyDown(keyboard::Key::w))
-                                camera.position += axes.front * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::q))
+                camera.position += axes.up * move_speed;
 
-                        if (keyboard::isKeyDown(keyboard::Key::s))
-                                camera.position -= axes.front * 0.1f;
-
-                        if (keyboard::isKeyDown(keyboard::Key::d))
-                                camera.position += axes.right * 0.1f;
-
-                        if (keyboard::isKeyDown(keyboard::Key::a))
-                                camera.position -= axes.right * 0.1f;
-
-                        if (keyboard::isKeyDown(keyboard::Key::q))
-                                camera.position += axes.up * 0.1f;
-
-                        if (keyboard::isKeyDown(keyboard::Key::z))
-                                camera.position -= axes.up * 0.1f;
-                }
-        }
+        if (keyboard::isKeyDown(keyboard::Key::z))
+                camera.position -= axes.up * move_speed;
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
