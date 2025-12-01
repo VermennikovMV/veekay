@@ -21,6 +21,12 @@ namespace {
 constexpr uint32_t max_models = 1024;
 constexpr uint32_t max_point_lights = 4;
 
+enum class LightMode : uint32_t {
+        Diffuse = 0,
+        Directional = 1,
+        Point = 2,
+};
+
 struct Vertex {
 	veekay::vec3 position;
 	veekay::vec3 normal;
@@ -42,6 +48,7 @@ struct SceneUniforms {
         veekay::mat4 view_projection;
         veekay::vec4 camera_position;
         veekay::vec4 ambient_color;
+        veekay::vec4 light_mode;
         DirectionalLight directional_light;
         veekay::vec4 point_light_count;
         PointLight point_lights[max_point_lights];
@@ -112,34 +119,28 @@ inline namespace {
                 uint32_t point_light_count;
         };
 
-	LightingState lighting = [] {
-		LightingState state{};
-		const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
-		state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
-		state.directional_light = DirectionalLight{
-			.direction_intensity = veekay::vec4{dir.x, dir.y, dir.z, 1.0f},
-			.color = veekay::vec4{1.0f, 0.95f, 0.9f, 1.0f},
-		};
-		state.point_lights = {
-			PointLight{
-				.position_intensity = veekay::vec4{-1.2f, 0.4f, -1.0f, 40.0f},
-				.color = veekay::vec4{1.0f, 0.5f, 0.4f, 1.0f},
-			},
-			PointLight{
-				.position_intensity = veekay::vec4{1.2f, 0.25f, -0.5f, 35.0f},
-				.color = veekay::vec4{0.4f, 0.6f, 1.0f, 1.0f},
-			},
-			PointLight{
-				.position_intensity = veekay::vec4{0.0f, 0.75f, 1.4f, 30.0f},
-				.color = veekay::vec4{0.5f, 1.0f, 0.7f, 1.0f},
-			},
-			PointLight{}
-		};
-		state.point_light_count = 3u;
-		return state;
-	}();
+        LightingState lighting = [] {
+                LightingState state{};
+                const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
+                state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
+                state.directional_light = DirectionalLight{
+                        .direction_intensity = veekay::vec4{dir.x, dir.y, dir.z, 1.0f},
+                        .color = veekay::vec4{1.0f, 0.95f, 0.9f, 1.0f},
+                };
+                state.point_lights = {
+                        PointLight{
+                                .position_intensity = veekay::vec4{0.0f, 0.0f, 0.0f, 32.0f},
+                                .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
+                        },
+                        PointLight{},
+                        PointLight{},
+                        PointLight{}
+                };
+                state.point_light_count = 1u;
+                return state;
+        }();
 
-        float rotation_speed = 45.0f;
+        LightMode light_mode = LightMode::Point;
 
         bool mouse_captured = false;
         float camera_move_speed = 3.5f;
@@ -668,7 +669,7 @@ void initialize(VkCommandBuffer cmd) {
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
                 .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 0.8f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
 
@@ -679,7 +680,7 @@ void initialize(VkCommandBuffer cmd) {
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
                 .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 1.4f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
 
@@ -690,9 +691,52 @@ void initialize(VkCommandBuffer cmd) {
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
                 .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 1.1f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
+
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
+        scene_uniforms.ambient_color = lighting.ambient_color;
+
+        int mode_index = static_cast<int>(light_mode);
+        scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
+        scene_uniforms.directional_light = lighting.directional_light;
+
+        uint32_t active_point_lights = (light_mode == LightMode::Point) ? lighting.point_light_count : 0u;
+        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(active_point_lights), 0.0f, 0.0f, 0.0f};
+        for (uint32_t i = 0; i < max_point_lights; ++i) {
+                scene_uniforms.point_lights[i] = lighting.point_lights[i];
+        }
+
+        *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
+
+                uniforms.model = model.transform.matrix();
+                uniforms.albedo_specular = veekay::vec4{
+                        model.albedo_color.x,
+                        model.albedo_color.y,
+                        model.albedo_color.z,
+                        model.specular_strength
+                };
+                uniforms.material_params = veekay::vec4{model.shininess, 0.0f, 0.0f, 0.0f};
+        }
+
+        const size_t alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+        for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+                const ModelUniforms& uniforms = model_uniforms[i];
+
+                char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+                *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+        }
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
@@ -720,36 +764,39 @@ void shutdown() {
 void update(double time) {
         ImGui::Begin("Controls:");
         ImGui::TextUnformatted("Camera: hold RMB + move mouse, WASD to move, Q/E to go down/up");
-        ImGui::SliderFloat("Rotation speed", &rotation_speed, 0.0f, 360.0f, "%.1f deg/s");
         ImGui::SliderFloat("Camera move speed", &camera_move_speed, 0.5f, 15.0f, "%.1f u/s");
         ImGui::SliderFloat("Mouse sensitivity", &camera_sensitivity, 0.01f, 0.25f, "%.3f");
         ImGui::ColorEdit3("Ambient color", lighting.ambient_color.elements);
-        ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
 
-        veekay::vec3 directional_dir{
-                lighting.directional_light.direction_intensity.x,
-                lighting.directional_light.direction_intensity.y,
-                lighting.directional_light.direction_intensity.z
-        };
-        if (ImGui::SliderFloat3("Directional direction", directional_dir.elements, -1.0f, 1.0f)) {
-                float len = veekay::vec3::length(directional_dir);
-                if (len > std::numeric_limits<float>::epsilon()) {
-                        directional_dir = directional_dir / len;
-                }
-
-                lighting.directional_light.direction_intensity.x = directional_dir.x;
-                lighting.directional_light.direction_intensity.y = directional_dir.y;
-                lighting.directional_light.direction_intensity.z = directional_dir.z;
+        int mode_index = static_cast<int>(light_mode);
+        const char* light_modes[] = {"Diffuse", "Directional", "Point"};
+        if (ImGui::Combo("Light type", &mode_index, light_modes, IM_ARRAYSIZE(light_modes))) {
+                light_mode = static_cast<LightMode>(mode_index);
         }
 
-	for (uint32_t i = 0; i < lighting.point_light_count; ++i) {
-		ImGui::PushID(static_cast<int>(i));
-		ImGui::Text("Point light %u", i + 1);
-		ImGui::ColorEdit3("Color", lighting.point_lights[i].color.elements);
-		ImGui::SliderFloat("Intensity", &lighting.point_lights[i].position_intensity.w, 0.0f, 80.0f, "%.1f");
-		ImGui::PopID();
-	}
-	ImGui::End();
+        if (light_mode == LightMode::Directional) {
+                ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
+
+                veekay::vec3 directional_dir{
+                        lighting.directional_light.direction_intensity.x,
+                        lighting.directional_light.direction_intensity.y,
+                        lighting.directional_light.direction_intensity.z
+                };
+                if (ImGui::SliderFloat3("Directional direction", directional_dir.elements, -1.0f, 1.0f)) {
+                        float len = veekay::vec3::length(directional_dir);
+                        if (len > std::numeric_limits<float>::epsilon()) {
+                                directional_dir = directional_dir / len;
+                        }
+
+                        lighting.directional_light.direction_intensity.x = directional_dir.x;
+                        lighting.directional_light.direction_intensity.y = directional_dir.y;
+                        lighting.directional_light.direction_intensity.z = directional_dir.z;
+                }
+        } else if (light_mode == LightMode::Point) {
+                ImGui::ColorEdit3("Point light color", lighting.point_lights[0].color.elements);
+                ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 80.0f, "%.1f");
+        }
+        ImGui::End();
 
         static double previous_time = time;
         float delta_time = static_cast<float>(time - previous_time);
@@ -808,28 +855,20 @@ void update(double time) {
 
         camera.position += movement * (move_speed * delta_time);
 
-        for (Model& model : models) {
-                float angular_velocity = model.angular_speed * rotation_speed;
-                model.transform.rotation += model.rotation_axis * (angular_velocity * delta_time);
-        }
-
-	if (lighting.point_light_count > 0) {
-		for (uint32_t i = 0; i < lighting.point_light_count; ++i) {
-			float base_angle = static_cast<float>(time) * 0.4f + float(i) * 2.0f * float(M_PI) / float(lighting.point_light_count);
-			float radius = 2.0f + 0.25f * std::sin(base_angle * 0.5f);
-			lighting.point_lights[i].position_intensity.x = std::cos(base_angle) * radius;
-			lighting.point_lights[i].position_intensity.y = 0.25f + 0.5f * std::sin(base_angle * 0.3f);
-			lighting.point_lights[i].position_intensity.z = std::sin(base_angle) * radius;
-		}
-	}
+        lighting.point_lights[0].position_intensity.x = 0.0f;
+        lighting.point_lights[0].position_intensity.y = 0.0f;
+        lighting.point_lights[0].position_intensity.z = 0.0f;
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
         scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
         scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
         scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
         scene_uniforms.directional_light = lighting.directional_light;
-        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(lighting.point_light_count), 0.0f, 0.0f, 0.0f};
+
+        uint32_t active_point_lights = (light_mode == LightMode::Point) ? lighting.point_light_count : 0u;
+        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(active_point_lights), 0.0f, 0.0f, 0.0f};
         for (uint32_t i = 0; i < max_point_lights; ++i) {
                 scene_uniforms.point_lights[i] = lighting.point_lights[i];
         }

@@ -22,6 +22,7 @@ layout (binding = 0, std140) uniform SceneUniforms {
 mat4 view_projection;
 vec4 camera_position;
 vec4 ambient_color;
+vec4 light_mode;
 DirectionalLight directional_light;
 vec4 point_light_count;
 PointLight point_lights[MAX_POINT_LIGHTS];
@@ -64,11 +65,16 @@ vec3 albedo = albedo_specular.rgb;
 float specular_strength = albedo_specular.w;
 float shininess = max(material_params.x, 1.0f);
 vec3 view_dir = normalize(camera_position.xyz - f_position);
+uint mode = uint(light_mode.x + 0.5f);
 vec3 color = ambient_color.rgb * albedo;
+
+if (mode == 1u) {
 color += calculateDirectional(normal, view_dir, albedo, specular_strength, shininess);
+} else if (mode == 2u) {
 uint count = min(uint(point_light_count.x), MAX_POINT_LIGHTS);
 for (uint i = 0; i < count; ++i) {
 color += calculatePoint(point_lights[i], f_position, normal, view_dir, albedo, specular_strength, shininess);
+}
 }
 final_color = vec4(color, 1.0f);
 }
