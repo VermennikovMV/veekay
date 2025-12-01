@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <algorithm>
 
 #include <veekay/veekay.hpp>
 
@@ -23,13 +24,25 @@ struct Vertex {
 	// NOTE: You can add more attributes
 };
 
+constexpr uint32_t max_point_lights = 4;
+
+struct PointLight {
+        veekay::vec3 position; float intensity;
+        veekay::vec3 color; float _pad0;
+};
+
 struct SceneUniforms {
-	veekay::mat4 view_projection;
+        veekay::mat4 view_projection;
+        veekay::vec3 camera_position; float ambient_strength;
+        veekay::vec3 directional_direction; float directional_intensity;
+        veekay::vec3 directional_color; float _pad1;
+        PointLight point_lights[max_point_lights];
+        uint32_t point_light_count; veekay::vec3 _pad2;
 };
 
 struct ModelUniforms {
-	veekay::mat4 model;
-	veekay::vec3 albedo_color; float _pad0;
+        veekay::mat4 model;
+        veekay::vec3 albedo_color; float shininess;
 };
 
 struct Mesh {
@@ -48,9 +61,10 @@ struct Transform {
 };
 
 struct Model {
-	Mesh mesh;
-	Transform transform;
-	veekay::vec3 albedo_color;
+        Mesh mesh;
+        Transform transform;
+        veekay::vec3 albedo_color;
+        float shininess = 64.0f;
 };
 
 struct Camera {
@@ -111,19 +125,26 @@ float toRadians(float degrees) {
 }
 
 veekay::mat4 Transform::matrix() const {
-	// TODO: Scaling and rotation
+        auto s = veekay::mat4::scaling(scale);
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(rotation.x));
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(rotation.y));
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(rotation.z));
+        auto r = rz * ry * rx;
+        auto t = veekay::mat4::translation(position);
 
-	auto t = veekay::mat4::translation(position);
-
-	return t;
+        return t * r * s;
 }
 
 veekay::mat4 Camera::view() const {
-	// TODO: Rotation
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(rotation.x));
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(rotation.y));
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(rotation.z));
+        auto r = rz * ry * rx;
 
-	auto t = veekay::mat4::translation(-position);
+        auto inverse_rotation = veekay::mat4::transpose(r);
+        auto t = veekay::mat4::translation(-position);
 
-	return t;
+        return inverse_rotation * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
@@ -582,35 +603,39 @@ void initialize(VkCommandBuffer cmd) {
 	}
 
 	// NOTE: Add models to scene
-	models.emplace_back(Model{
-		.mesh = plane_mesh,
-		.transform = Transform{},
-		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = plane_mesh,
+                .transform = Transform{},
+                .albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {-2.0f, -0.5f, -1.5f},
-		},
-		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {-2.0f, -0.5f, -1.5f},
+                        .rotation = {0.0f, 45.0f, 0.0f},
+                },
+                .albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f},
+                .shininess = 96.0f,
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {1.5f, -0.5f, -0.5f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {1.5f, -0.5f, -0.5f},
+                        .rotation = {0.0f, -30.0f, 0.0f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
+        });
 
-	models.emplace_back(Model{
-		.mesh = cube_mesh,
-		.transform = Transform{
-			.position = {0.0f, -0.5f, 1.0f},
-		},
-		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
-	});
+        models.emplace_back(Model{
+                .mesh = cube_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 1.0f},
+                        .rotation = {15.0f, 0.0f, 25.0f},
+                },
+                .albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
+        });
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
@@ -639,23 +664,32 @@ void shutdown() {
 }
 
 void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::End();
+        ImGui::Begin("Controls:");
+        ImGui::End();
 
-	if (!ImGui::IsWindowHovered()) {
-		using namespace veekay::input;
+        if (!ImGui::IsWindowHovered()) {
+                using namespace veekay::input;
 
-		if (mouse::isButtonDown(mouse::Button::left)) {
-			auto move_delta = mouse::cursorDelta();
+                if (mouse::isButtonDown(mouse::Button::left)) {
+                        auto move_delta = mouse::cursorDelta();
+                        camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f,
+                                                       -89.0f, 89.0f);
+                        camera.rotation.y -= move_delta.x * 0.1f;
 
-			// TODO: Use mouse_delta to update camera rotation
-			
-			auto view = camera.view();
+                        const float yaw = toRadians(camera.rotation.y);
+                        const float pitch = toRadians(camera.rotation.x);
 
-			// TODO: Calculate right, up and front from view matrix
-			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
-			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
-			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
+                        veekay::vec3 front{
+                                cosf(pitch) * sinf(yaw),
+                                sinf(pitch),
+                                cosf(pitch) * cosf(yaw)
+                        };
+
+                        front = veekay::vec3::normalized(front);
+
+                        veekay::vec3 world_up{0.0f, 1.0f, 0.0f};
+                        veekay::vec3 right = veekay::vec3::normalized(veekay::vec3::cross(front, world_up));
+                        veekay::vec3 up = veekay::vec3::normalized(veekay::vec3::cross(right, front));
 
 			if (keyboard::isKeyDown(keyboard::Key::w))
 				camera.position += front * 0.1f;
@@ -677,19 +711,44 @@ void update(double time) {
 		}
 	}
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{
+                .view_projection = camera.view_projection(aspect_ratio),
+                .camera_position = camera.position,
+                .ambient_strength = 0.15f,
+                .directional_direction = veekay::vec3{-0.3f, -1.0f, -0.3f},
+                .directional_intensity = 0.9f,
+                .directional_color = veekay::vec3{1.0f, 1.0f, 1.0f},
+        };
 
-	std::vector<ModelUniforms> model_uniforms(models.size());
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		ModelUniforms& uniforms = model_uniforms[i];
+        scene_uniforms.point_light_count = 3;
+        scene_uniforms.point_lights[0] = PointLight{
+                .position = {-2.0f, 1.0f, -1.5f},
+                .intensity = 10.0f,
+                .color = {1.0f, 0.8f, 0.6f},
+        };
 
-		uniforms.model = model.transform.matrix();
-		uniforms.albedo_color = model.albedo_color;
-	}
+        scene_uniforms.point_lights[1] = PointLight{
+                .position = {1.5f, 1.0f, -0.5f},
+                .intensity = 12.0f,
+                .color = {0.6f, 0.8f, 1.0f},
+        };
+
+        scene_uniforms.point_lights[2] = PointLight{
+                .position = {0.0f, 1.5f, 1.0f},
+                .intensity = 9.0f,
+                .color = {0.8f, 0.8f, 1.0f},
+        };
+
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
+
+                uniforms.model = model.transform.matrix();
+                uniforms.albedo_color = model.albedo_color;
+                uniforms.shininess = model.shininess;
+        }
 
 	*(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
 
