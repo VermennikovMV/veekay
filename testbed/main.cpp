@@ -1,11 +1,15 @@
+#include <algorithm>
 #include <cstdint>
 #include <climits>
 #include <cstring>
+#include <limits>
+#include <array>
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <cmath>
 
+#include <veekay/input.hpp>
 #include <veekay/veekay.hpp>
 
 #include <vulkan/vulkan_core.h>
@@ -15,6 +19,7 @@
 namespace {
 
 constexpr uint32_t max_models = 1024;
+constexpr uint32_t max_point_lights = 4;
 
 struct Vertex {
 	veekay::vec3 position;
@@ -23,13 +28,29 @@ struct Vertex {
 	// NOTE: You can add more attributes
 };
 
+struct DirectionalLight {
+        veekay::vec4 direction_intensity;
+        veekay::vec4 color;
+};
+
+struct PointLight {
+        veekay::vec4 position_intensity;
+        veekay::vec4 color;
+};
+
 struct SceneUniforms {
-	veekay::mat4 view_projection;
+        veekay::mat4 view_projection;
+        veekay::vec4 camera_position;
+        veekay::vec4 ambient_color;
+        DirectionalLight directional_light;
+        veekay::vec4 point_light_count;
+        PointLight point_lights[max_point_lights];
 };
 
 struct ModelUniforms {
-	veekay::mat4 model;
-	veekay::vec3 albedo_color; float _pad0;
+        veekay::mat4 model;
+        veekay::vec4 albedo_specular;
+        veekay::vec4 material_params;
 };
 
 struct Mesh {
@@ -53,6 +74,8 @@ struct Model {
         veekay::vec3 albedo_color;
         float angular_speed = 1.0f;
         veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
+        float specular_strength = 0.6f;
+        float shininess = 32.0f;
 };
 
 struct Camera {
@@ -82,7 +105,76 @@ inline namespace {
 
         std::vector<Model> models;
 
+        struct LightingState {
+                veekay::vec4 ambient_color;
+                DirectionalLight directional_light;
+                std::array<PointLight, max_point_lights> point_lights;
+                uint32_t point_light_count;
+        };
+
+	LightingState lighting = [] {
+		LightingState state{};
+		const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
+		state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
+		state.directional_light = DirectionalLight{
+			.direction_intensity = veekay::vec4{dir.x, dir.y, dir.z, 1.0f},
+			.color = veekay::vec4{1.0f, 0.95f, 0.9f, 1.0f},
+		};
+		state.point_lights = {
+			PointLight{
+				.position_intensity = veekay::vec4{-1.2f, 0.4f, -1.0f, 40.0f},
+				.color = veekay::vec4{1.0f, 0.5f, 0.4f, 1.0f},
+			},
+			PointLight{
+				.position_intensity = veekay::vec4{1.2f, 0.25f, -0.5f, 35.0f},
+				.color = veekay::vec4{0.4f, 0.6f, 1.0f, 1.0f},
+			},
+			PointLight{
+				.position_intensity = veekay::vec4{0.0f, 0.75f, 1.4f, 30.0f},
+				.color = veekay::vec4{0.5f, 1.0f, 0.7f, 1.0f},
+			},
+			PointLight{}
+		};
+		state.point_light_count = 3u;
+		return state;
+	}();
+
         float rotation_speed = 45.0f;
+
+        bool mouse_captured = false;
+        float camera_move_speed = 3.5f;
+        float camera_sensitivity = 0.08f;
+}
+
+veekay::vec3 forwardFromRotation(const veekay::vec3& rotation) {
+        const float pitch = toRadians(rotation.x);
+        const float yaw = toRadians(rotation.y);
+
+        veekay::vec3 forward{
+                std::cos(pitch) * std::sin(yaw),
+                std::sin(pitch),
+                std::cos(pitch) * std::cos(yaw)
+        };
+
+        float length = veekay::vec3::length(forward);
+        if (length > std::numeric_limits<float>::epsilon()) {
+                forward = forward / length;
+        }
+
+        return forward;
+}
+
+veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
+        const veekay::vec3 forward = forwardFromRotation(rotation);
+        const veekay::vec3 up{0.0f, 1.0f, 0.0f};
+
+        veekay::vec3 right = veekay::vec3::cross(up, forward);
+        float length = veekay::vec3::length(right);
+        if (length > std::numeric_limits<float>::epsilon()) {
+                right = right / length;
+        }
+
+        return right;
 }
 
 // NOTE: Vulkan objects
@@ -627,44 +719,147 @@ void shutdown() {
 
 void update(double time) {
         ImGui::Begin("Controls:");
+        ImGui::TextUnformatted("Camera: hold RMB + move mouse, WASD to move, Q/E to go down/up");
         ImGui::SliderFloat("Rotation speed", &rotation_speed, 0.0f, 360.0f, "%.1f deg/s");
-        ImGui::Text("Camera is fixed");
-        ImGui::End();
+        ImGui::SliderFloat("Camera move speed", &camera_move_speed, 0.5f, 15.0f, "%.1f u/s");
+        ImGui::SliderFloat("Mouse sensitivity", &camera_sensitivity, 0.01f, 0.25f, "%.3f");
+        ImGui::ColorEdit3("Ambient color", lighting.ambient_color.elements);
+        ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
+
+        veekay::vec3 directional_dir{
+                lighting.directional_light.direction_intensity.x,
+                lighting.directional_light.direction_intensity.y,
+                lighting.directional_light.direction_intensity.z
+        };
+        if (ImGui::SliderFloat3("Directional direction", directional_dir.elements, -1.0f, 1.0f)) {
+                float len = veekay::vec3::length(directional_dir);
+                if (len > std::numeric_limits<float>::epsilon()) {
+                        directional_dir = directional_dir / len;
+                }
+
+                lighting.directional_light.direction_intensity.x = directional_dir.x;
+                lighting.directional_light.direction_intensity.y = directional_dir.y;
+                lighting.directional_light.direction_intensity.z = directional_dir.z;
+        }
+
+	for (uint32_t i = 0; i < lighting.point_light_count; ++i) {
+		ImGui::PushID(static_cast<int>(i));
+		ImGui::Text("Point light %u", i + 1);
+		ImGui::ColorEdit3("Color", lighting.point_lights[i].color.elements);
+		ImGui::SliderFloat("Intensity", &lighting.point_lights[i].position_intensity.w, 0.0f, 80.0f, "%.1f");
+		ImGui::PopID();
+	}
+	ImGui::End();
 
         static double previous_time = time;
         float delta_time = static_cast<float>(time - previous_time);
         previous_time = time;
+
+        const bool right_mouse_down = veekay::input::mouse::isButtonDown(veekay::input::mouse::Button::right);
+        if (right_mouse_down && !mouse_captured) {
+                veekay::input::mouse::setCaptured(true);
+                mouse_captured = true;
+                veekay::input::mouse::cursorDelta();
+        } else if (!right_mouse_down && mouse_captured) {
+                veekay::input::mouse::setCaptured(false);
+                mouse_captured = false;
+        }
+
+        if (mouse_captured) {
+                veekay::vec2 delta = veekay::input::mouse::cursorDelta();
+                camera.rotation.x -= delta.y * camera_sensitivity;
+                camera.rotation.y += delta.x * camera_sensitivity;
+                camera.rotation.x = std::clamp(camera.rotation.x, -89.0f, 89.0f);
+        }
+
+        veekay::vec3 movement{};
+        const veekay::vec3 forward = forwardFromRotation(camera.rotation);
+        const veekay::vec3 right = rightFromRotation(camera.rotation);
+        veekay::vec3 up = veekay::vec3::cross(forward, right);
+        float up_length = veekay::vec3::length(up);
+        if (up_length > std::numeric_limits<float>::epsilon()) {
+                up = up / up_length;
+        } else {
+                up = {0.0f, 1.0f, 0.0f};
+        }
+
+        using veekay::input::keyboard::isKeyDown;
+        using veekay::input::keyboard::Key;
+
+        if (isKeyDown(Key::w)) movement += forward;
+        if (isKeyDown(Key::s)) movement -= forward;
+        if (isKeyDown(Key::d)) movement += right;
+        if (isKeyDown(Key::a)) movement -= right;
+        if (isKeyDown(Key::e)) movement += up;
+        if (isKeyDown(Key::q)) movement -= up;
+
+        float movement_length = veekay::vec3::length(movement);
+        if (movement_length > std::numeric_limits<float>::epsilon()) {
+                movement = movement / movement_length;
+        }
+
+        float move_speed = camera_move_speed;
+        if (isKeyDown(Key::left_shift)) {
+                move_speed *= 2.5f;
+        }
+        if (isKeyDown(Key::left_control)) {
+                move_speed *= 0.5f;
+        }
+
+        camera.position += movement * (move_speed * delta_time);
 
         for (Model& model : models) {
                 float angular_velocity = model.angular_speed * rotation_speed;
                 model.transform.rotation += model.rotation_axis * (angular_velocity * delta_time);
         }
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
-
-	std::vector<ModelUniforms> model_uniforms(models.size());
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		ModelUniforms& uniforms = model_uniforms[i];
-
-		uniforms.model = model.transform.matrix();
-		uniforms.albedo_color = model.albedo_color;
+	if (lighting.point_light_count > 0) {
+		for (uint32_t i = 0; i < lighting.point_light_count; ++i) {
+			float base_angle = static_cast<float>(time) * 0.4f + float(i) * 2.0f * float(M_PI) / float(lighting.point_light_count);
+			float radius = 2.0f + 0.25f * std::sin(base_angle * 0.5f);
+			lighting.point_lights[i].position_intensity.x = std::cos(base_angle) * radius;
+			lighting.point_lights[i].position_intensity.y = 0.25f + 0.5f * std::sin(base_angle * 0.3f);
+			lighting.point_lights[i].position_intensity.z = std::sin(base_angle) * radius;
+		}
 	}
 
-	*(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
+        scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.directional_light = lighting.directional_light;
+        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(lighting.point_light_count), 0.0f, 0.0f, 0.0f};
+        for (uint32_t i = 0; i < max_point_lights; ++i) {
+                scene_uniforms.point_lights[i] = lighting.point_lights[i];
+        }
 
-	const size_t alignment =
-		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
 
-	for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
-		const ModelUniforms& uniforms = model_uniforms[i];
+                uniforms.model = model.transform.matrix();
+                uniforms.albedo_specular = veekay::vec4{
+                        model.albedo_color.x,
+                        model.albedo_color.y,
+                        model.albedo_color.z,
+                        model.specular_strength
+                };
+                uniforms.material_params = veekay::vec4{model.shininess, 0.0f, 0.0f, 0.0f};
+        }
 
-		char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
-		*reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
-	}
+        *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        const size_t alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+        for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+                const ModelUniforms& uniforms = model_uniforms[i];
+
+                char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+                *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+        }
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
