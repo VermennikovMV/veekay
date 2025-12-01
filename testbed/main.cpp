@@ -10,6 +10,7 @@
 #include <veekay/veekay.hpp>
 
 #include <vulkan/vulkan_core.h>
+#include <imgui.h>
 #include <lodepng.h>
 
 namespace {
@@ -675,14 +676,9 @@ void initialize(VkCommandBuffer cmd) {
 
         point_lights = {
                 PointLight{
-                        .position = {2.0f, 0.5f, 2.0f},
-                        .intensity = 50.0f,
-                        .color = {1.0f, 0.7f, 0.5f},
-                },
-                PointLight{
-                        .position = {-1.5f, 0.2f, 1.0f},
-                        .intensity = 30.0f,
-                        .color = {0.5f, 0.8f, 1.0f},
+                        .position = {0.0f, 0.5f, 0.0f},
+                        .intensity = 60.0f,
+                        .color = {1.0f, 0.9f, 0.7f},
                 },
         };
 }
@@ -713,11 +709,39 @@ void shutdown() {
 }
 
 void update(double time) {
+        ImGui::Begin("Lighting");
+
+        ImGui::SliderFloat("Ambient", &ambient_strength, 0.0f, 1.0f, "%.3f");
+
+        if (ImGui::CollapsingHeader("Directional light", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat3("Direction", &directional_light.direction.x, 0.01f);
+                ImGui::DragFloat("Intensity", &directional_light.intensity, 0.1f, 0.0f, 200.0f, "%.2f");
+                ImGui::ColorEdit3("Color", &directional_light.color.x);
+        }
+
+        if (ImGui::CollapsingHeader("Point lights", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for (size_t i = 0; i < point_lights.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::Text("Point %zu", i + 1);
+                        ImGui::DragFloat3("Position", &point_lights[i].position.x, 0.01f);
+                        ImGui::DragFloat("Intensity", &point_lights[i].intensity, 0.1f, 0.0f, 500.0f, "%.2f");
+                        ImGui::ColorEdit3("Color", &point_lights[i].color.x);
+                        ImGui::Separator();
+                        ImGui::PopID();
+                }
+        }
+
+        ImGui::End();
+
         CameraAxes axes = calculateCameraAxes(camera);
 
         using namespace veekay::input;
 
-        if (mouse::isButtonDown(mouse::Button::left)) {
+        ImGuiIO& io = ImGui::GetIO();
+        const bool allow_mouse = !io.WantCaptureMouse;
+        const bool allow_keyboard = !io.WantCaptureKeyboard;
+
+        if (allow_mouse && mouse::isButtonDown(mouse::Button::left)) {
                 auto move_delta = mouse::cursorDelta();
 
                 camera.rotation.x = std::clamp(camera.rotation.x - move_delta.y * 0.1f, -89.0f, 89.0f);
@@ -727,22 +751,22 @@ void update(double time) {
 
         const float move_speed = 0.1f;
 
-        if (keyboard::isKeyDown(keyboard::Key::w))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::w))
                 camera.position += axes.front * move_speed;
 
-        if (keyboard::isKeyDown(keyboard::Key::s))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::s))
                 camera.position -= axes.front * move_speed;
 
-        if (keyboard::isKeyDown(keyboard::Key::d))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::d))
                 camera.position += axes.right * move_speed;
 
-        if (keyboard::isKeyDown(keyboard::Key::a))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::a))
                 camera.position -= axes.right * move_speed;
 
-        if (keyboard::isKeyDown(keyboard::Key::q))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::q))
                 camera.position += axes.up * move_speed;
 
-        if (keyboard::isKeyDown(keyboard::Key::z))
+        if (allow_keyboard && keyboard::isKeyDown(keyboard::Key::z))
                 camera.position -= axes.up * move_speed;
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
