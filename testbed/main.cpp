@@ -258,7 +258,9 @@ inline namespace {
         VkSampler missing_texture_sampler;
 
         veekay::graphics::Texture* texture;
-	VkSampler texture_sampler;
+        VkSampler texture_sampler;
+
+        veekay::graphics::Texture* white_texture;
 }
 
 veekay::mat4 Transform::matrix() const {
@@ -653,6 +655,12 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        { // NOTE: 1x1 white texture for untextured surfaces
+                const uint32_t pixel = 0xffffffffu;
+                white_texture = new veekay::graphics::Texture(
+                        cmd, 1, 1, VK_FORMAT_B8G8R8A8_UNORM, &pixel);
+        }
+
         materials.reserve(max_materials);
 
         materials.push_back(Material{
@@ -674,12 +682,12 @@ void initialize(VkCommandBuffer cmd) {
         });
 
         materials.push_back(Material{
-                .ambient_color = veekay::vec3{0.18f, 0.18f, 0.2f},
-                .diffuse_color = veekay::vec3{0.35f, 0.35f, 0.4f},
-                .specular_color = veekay::vec3{0.0f, 0.0f, 0.0f},
-                .shininess = 8.0f,
+                .ambient_color = veekay::vec3{0.9f, 0.9f, 0.9f},
+                .diffuse_color = veekay::vec3{1.0f, 1.0f, 1.0f},
+                .specular_color = veekay::vec3{0.02f, 0.02f, 0.02f},
+                .shininess = 4.0f,
                 .sampler = missing_texture_sampler,
-                .texture = missing_texture,
+                .texture = white_texture,
         });
 
         materials.push_back(Material{
@@ -841,7 +849,7 @@ void initialize(VkCommandBuffer cmd) {
                 vertices.push_back(Vertex{{5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}});
                 vertices.push_back(Vertex{{-5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}});
 
-                indices.insert(indices.end(), {0, 1, 2, 2, 3, 0});
+                indices.insert(indices.end(), {0, 2, 1, 0, 3, 2});
 
                 plane_mesh.vertex_buffer = new veekay::graphics::Buffer(
                         vertices.size() * sizeof(Vertex), vertices.data(),
@@ -855,10 +863,12 @@ void initialize(VkCommandBuffer cmd) {
         }
 
         // NOTE: Add models to scene
+        const float base_height = -0.5f;
+
         models.emplace_back(Model{
                 .mesh = plane_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 0.0f},
+                        .position = {0.0f, base_height, 0.0f},
                         .scale = {1.0f, 1.0f, 1.0f},
                 },
                 .angular_speed = 0.0f,
@@ -869,7 +879,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {-1.5f, -0.5f, -2.0f},
+                        .position = {-1.5f, base_height, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
                 .angular_speed = 0.0f,
@@ -880,7 +890,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {1.2f, -0.5f, -0.5f},
+                        .position = {1.2f, base_height, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
                 .angular_speed = 0.0f,
@@ -891,7 +901,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 1.2f},
+                        .position = {0.0f, base_height, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
                 .angular_speed = 0.0f,
@@ -997,6 +1007,7 @@ void shutdown() {
         if (texture && texture != missing_texture) {
                 delete texture;
         }
+        delete white_texture;
         delete missing_texture;
 
         delete plane_mesh.index_buffer;
