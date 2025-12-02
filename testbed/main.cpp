@@ -126,7 +126,8 @@ struct Camera {
 // NOTE: Scene objects
 inline namespace {
         Camera camera{
-                .position = {0.0f, -0.5f, -3.0f}
+                .position = {0.0f, 1.0f, -3.0f},
+                .rotation = {0.0f, 0.0f, 180.0f},
         };
 
         std::vector<Model> models;
@@ -143,7 +144,7 @@ inline namespace {
 
         LightingState lighting = [] {
                 LightingState state{};
-                const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
+                const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{0.3f, 1.0f, 0.2f});
                 state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
                 state.diffuse_color = veekay::vec4{1.0f, 0.95f, 0.9f, 0.8f};
                 state.directional_light = DirectionalLight{
@@ -152,7 +153,7 @@ inline namespace {
                 };
                 state.point_lights = {
                         PointLight{
-                                .position_intensity = veekay::vec4{-1.5f, 0.0f, -1.0f, 8.0f},
+                                .position_intensity = veekay::vec4{-1.5f, 1.25f, -1.0f, 8.0f},
                                 .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
                         },
                         PointLight{},
@@ -863,7 +864,7 @@ void initialize(VkCommandBuffer cmd) {
         }
 
         // NOTE: Add models to scene
-        const float base_height = -0.5f;
+        const float base_height = 0.0f;
 
         models.emplace_back(Model{
                 .mesh = plane_mesh,
