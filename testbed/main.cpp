@@ -1,11 +1,15 @@
+#include <algorithm>
 #include <cstdint>
 #include <climits>
 #include <cstring>
+#include <limits>
+#include <array>
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <cmath>
 
+#include <veekay/input.hpp>
 #include <veekay/veekay.hpp>
 
 #include <vulkan/vulkan_core.h>
@@ -15,6 +19,13 @@
 namespace {
 
 constexpr uint32_t max_models = 1024;
+constexpr uint32_t max_point_lights = 4;
+
+enum class LightMode : uint32_t {
+        Diffuse = 0,
+        Directional = 1,
+        Point = 2,
+};
 
 struct Vertex {
 	veekay::vec3 position;
@@ -23,13 +34,32 @@ struct Vertex {
 	// NOTE: You can add more attributes
 };
 
+struct DirectionalLight {
+        veekay::vec4 direction_intensity;
+        veekay::vec4 color;
+};
+
+struct PointLight {
+        veekay::vec4 position_intensity;
+        veekay::vec4 color;
+};
+
 struct SceneUniforms {
-	veekay::mat4 view_projection;
+        veekay::mat4 view_projection;
+        veekay::vec4 camera_position;
+        veekay::vec4 ambient_color;
+        veekay::vec4 diffuse_color;
+        veekay::vec4 light_mode;
+        DirectionalLight directional_light;
+        veekay::vec4 point_light_count;
+        PointLight point_lights[max_point_lights];
 };
 
 struct ModelUniforms {
-	veekay::mat4 model;
-	veekay::vec3 albedo_color; float _pad0;
+        veekay::mat4 model;
+        veekay::vec4 ambient_color;
+        veekay::vec4 diffuse_color;
+        veekay::vec4 specular_color_shininess;
 };
 
 struct Mesh {
@@ -50,9 +80,15 @@ struct Transform {
 struct Model {
         Mesh mesh;
         Transform transform;
-        veekay::vec3 albedo_color;
         float angular_speed = 1.0f;
         veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
+};
+
+struct Material {
+        veekay::vec3 ambient_color;
+        veekay::vec3 diffuse_color;
+        veekay::vec3 specular_color;
+        float shininess = 32.0f;
 };
 
 struct Camera {
@@ -82,7 +118,83 @@ inline namespace {
 
         std::vector<Model> models;
 
-        float rotation_speed = 45.0f;
+        struct LightingState {
+                veekay::vec4 ambient_color;
+                veekay::vec4 diffuse_color;
+                DirectionalLight directional_light;
+                std::array<PointLight, max_point_lights> point_lights;
+                uint32_t point_light_count;
+        };
+
+        LightingState lighting = [] {
+                LightingState state{};
+                const veekay::vec3 dir = veekay::vec3::normalized(veekay::vec3{-0.3f, -1.0f, -0.2f});
+                state.ambient_color = veekay::vec4{0.08f, 0.08f, 0.1f, 1.0f};
+                state.diffuse_color = veekay::vec4{1.0f, 0.95f, 0.9f, 0.8f};
+                state.directional_light = DirectionalLight{
+                        .direction_intensity = veekay::vec4{dir.x, dir.y, dir.z, 1.0f},
+                        .color = veekay::vec4{1.0f, 0.95f, 0.9f, 1.0f},
+                };
+                state.point_lights = {
+                        PointLight{
+                                .position_intensity = veekay::vec4{-1.5f, 0.0f, -1.0f, 8.0f},
+                                .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
+                        },
+                        PointLight{},
+                        PointLight{},
+                        PointLight{}
+                };
+                state.point_light_count = 1u;
+                return state;
+        }();
+
+        Material shared_material = {
+                .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
+                .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .specular_color = veekay::vec3{0.9f, 0.85f, 0.8f},
+                .shininess = 24.0f,
+        };
+
+        LightMode light_mode = LightMode::Point;
+
+        bool mouse_captured = false;
+        float camera_move_speed = 3.5f;
+        float camera_sensitivity = 0.08f;
+}
+
+float toRadians(float degrees) {
+        return degrees * float(M_PI) / 180.0f;
+}
+
+veekay::vec3 forwardFromRotation(const veekay::vec3& rotation) {
+        const float pitch = toRadians(rotation.x);
+        const float yaw = toRadians(rotation.y);
+
+        veekay::vec3 forward{
+                std::cos(pitch) * std::sin(yaw),
+                std::sin(pitch),
+                std::cos(pitch) * std::cos(yaw)
+        };
+
+        float length = veekay::vec3::length(forward);
+        if (length > std::numeric_limits<float>::epsilon()) {
+                forward = forward / length;
+        }
+
+        return forward;
+}
+
+veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
+        const veekay::vec3 forward = forwardFromRotation(rotation);
+        const veekay::vec3 up{0.0f, 1.0f, 0.0f};
+
+        veekay::vec3 right = veekay::vec3::cross(up, forward);
+        float length = veekay::vec3::length(right);
+        if (length > std::numeric_limits<float>::epsilon()) {
+                right = right / length;
+        }
+
+        return right;
 }
 
 // NOTE: Vulkan objects
@@ -107,10 +219,6 @@ inline namespace {
 
 	veekay::graphics::Texture* texture;
 	VkSampler texture_sampler;
-}
-
-float toRadians(float degrees) {
-	return degrees * float(M_PI) / 180.0f;
 }
 
 veekay::mat4 Transform::matrix() const {
@@ -575,8 +683,7 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {-1.5f, -0.5f, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 0.8f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
 
@@ -586,8 +693,7 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {1.2f, -0.5f, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 1.4f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
 
@@ -597,10 +703,64 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {0.0f, -0.5f, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .angular_speed = 1.1f,
+                .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
+
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
+        scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.diffuse_color = lighting.diffuse_color;
+
+        int mode_index = static_cast<int>(light_mode);
+        scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
+        scene_uniforms.directional_light = lighting.directional_light;
+
+        uint32_t active_point_lights = (light_mode == LightMode::Point) ? lighting.point_light_count : 0u;
+        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(active_point_lights), 0.0f, 0.0f, 0.0f};
+        for (uint32_t i = 0; i < max_point_lights; ++i) {
+                scene_uniforms.point_lights[i] = lighting.point_lights[i];
+        }
+
+        *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
+
+                uniforms.model = model.transform.matrix();
+                uniforms.ambient_color = veekay::vec4{
+                        shared_material.ambient_color.x,
+                        shared_material.ambient_color.y,
+                        shared_material.ambient_color.z,
+                        1.0f
+                };
+                uniforms.diffuse_color = veekay::vec4{
+                        shared_material.diffuse_color.x,
+                        shared_material.diffuse_color.y,
+                        shared_material.diffuse_color.z,
+                        1.0f
+                };
+                uniforms.specular_color_shininess = veekay::vec4{
+                        shared_material.specular_color.x,
+                        shared_material.specular_color.y,
+                        shared_material.specular_color.z,
+                        shared_material.shininess
+                };
+        }
+
+        const size_t alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+        for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+                const ModelUniforms& uniforms = model_uniforms[i];
+
+                char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+                *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+        }
 }
 
 // NOTE: Destroy resources here, do not cause leaks in your program!
@@ -627,44 +787,159 @@ void shutdown() {
 
 void update(double time) {
         ImGui::Begin("Controls:");
-        ImGui::SliderFloat("Rotation speed", &rotation_speed, 0.0f, 360.0f, "%.1f deg/s");
-        ImGui::Text("Camera is fixed");
+        ImGui::TextUnformatted("Camera: hold RMB + move mouse, WASD to move, Q/E to go down/up");
+        ImGui::SliderFloat("Camera move speed", &camera_move_speed, 0.5f, 15.0f, "%.1f u/s");
+        ImGui::SliderFloat("Mouse sensitivity", &camera_sensitivity, 0.01f, 0.25f, "%.3f");
+        ImGui::ColorEdit3("Ambient color", lighting.ambient_color.elements);
+
+        int mode_index = static_cast<int>(light_mode);
+        const char* light_modes[] = {"Diffuse", "Directional", "Point"};
+        if (ImGui::Combo("Light type", &mode_index, light_modes, IM_ARRAYSIZE(light_modes))) {
+                light_mode = static_cast<LightMode>(mode_index);
+        }
+
+        if (light_mode == LightMode::Diffuse) {
+                ImGui::ColorEdit3("Diffuse color", lighting.diffuse_color.elements);
+                ImGui::SliderFloat("Diffuse intensity", &lighting.diffuse_color.w, 0.0f, 2.5f, "%.2f");
+        } else if (light_mode == LightMode::Directional) {
+                ImGui::SliderFloat("Directional intensity", &lighting.directional_light.direction_intensity.w, 0.0f, 3.0f, "%.2f");
+
+                veekay::vec3 directional_dir{
+                        lighting.directional_light.direction_intensity.x,
+                        lighting.directional_light.direction_intensity.y,
+                        lighting.directional_light.direction_intensity.z
+                };
+                if (ImGui::SliderFloat3("Directional direction", directional_dir.elements, -1.0f, 1.0f)) {
+                        float len = veekay::vec3::length(directional_dir);
+                        if (len > std::numeric_limits<float>::epsilon()) {
+                                directional_dir = directional_dir / len;
+                        }
+
+                        lighting.directional_light.direction_intensity.x = directional_dir.x;
+                        lighting.directional_light.direction_intensity.y = directional_dir.y;
+                        lighting.directional_light.direction_intensity.z = directional_dir.z;
+                }
+        } else if (light_mode == LightMode::Point) {
+                ImGui::ColorEdit3("Point light color", lighting.point_lights[0].color.elements);
+                ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 40.0f, "%.1f");
+        }
+
+        ImGui::SeparatorText("Materials");
+        ImGui::ColorEdit3("Ambient", shared_material.ambient_color.elements);
+        ImGui::ColorEdit3("Diffuse", shared_material.diffuse_color.elements);
+        ImGui::ColorEdit3("Specular", shared_material.specular_color.elements);
+        ImGui::SliderFloat("Shininess", &shared_material.shininess, 1.0f, 128.0f, "%.0f");
         ImGui::End();
 
         static double previous_time = time;
         float delta_time = static_cast<float>(time - previous_time);
         previous_time = time;
 
-        for (Model& model : models) {
-                float angular_velocity = model.angular_speed * rotation_speed;
-                model.transform.rotation += model.rotation_axis * (angular_velocity * delta_time);
+        const bool right_mouse_down = veekay::input::mouse::isButtonDown(veekay::input::mouse::Button::right);
+        if (right_mouse_down && !mouse_captured) {
+                veekay::input::mouse::setCaptured(true);
+                mouse_captured = true;
+                veekay::input::mouse::cursorDelta();
+        } else if (!right_mouse_down && mouse_captured) {
+                veekay::input::mouse::setCaptured(false);
+                mouse_captured = false;
         }
 
-	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-	SceneUniforms scene_uniforms{
-		.view_projection = camera.view_projection(aspect_ratio),
-	};
+        if (mouse_captured) {
+                veekay::vec2 delta = veekay::input::mouse::cursorDelta();
+                camera.rotation.x -= delta.y * camera_sensitivity;
+                camera.rotation.y += delta.x * camera_sensitivity;
+                camera.rotation.x = std::clamp(camera.rotation.x, -89.0f, 89.0f);
+        }
 
-	std::vector<ModelUniforms> model_uniforms(models.size());
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		ModelUniforms& uniforms = model_uniforms[i];
+        veekay::vec3 movement{};
+        const veekay::vec3 forward = forwardFromRotation(camera.rotation);
+        const veekay::vec3 right = rightFromRotation(camera.rotation);
+        veekay::vec3 up = veekay::vec3::cross(forward, right);
+        float up_length = veekay::vec3::length(up);
+        if (up_length > std::numeric_limits<float>::epsilon()) {
+                up = up / up_length;
+        } else {
+                up = {0.0f, 1.0f, 0.0f};
+        }
 
-		uniforms.model = model.transform.matrix();
-		uniforms.albedo_color = model.albedo_color;
-	}
+        using veekay::input::keyboard::isKeyDown;
+        using veekay::input::keyboard::Key;
 
-	*(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+        if (isKeyDown(Key::w)) movement += forward;
+        if (isKeyDown(Key::s)) movement -= forward;
+        if (isKeyDown(Key::d)) movement += right;
+        if (isKeyDown(Key::a)) movement -= right;
+        if (isKeyDown(Key::e)) movement += up;
+        if (isKeyDown(Key::q)) movement -= up;
 
-	const size_t alignment =
-		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+        float movement_length = veekay::vec3::length(movement);
+        if (movement_length > std::numeric_limits<float>::epsilon()) {
+                movement = movement / movement_length;
+        }
 
-	for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
-		const ModelUniforms& uniforms = model_uniforms[i];
+        float move_speed = camera_move_speed;
+        if (isKeyDown(Key::left_shift)) {
+                move_speed *= 2.5f;
+        }
+        if (isKeyDown(Key::left_control)) {
+                move_speed *= 0.5f;
+        }
 
-		char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
-		*reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
-	}
+        camera.position += movement * (move_speed * delta_time);
+
+        float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
+        SceneUniforms scene_uniforms{};
+        scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
+        scene_uniforms.camera_position = veekay::vec4{camera.position.x, camera.position.y, camera.position.z, 1.0f};
+        scene_uniforms.ambient_color = lighting.ambient_color;
+        scene_uniforms.diffuse_color = lighting.diffuse_color;
+        scene_uniforms.light_mode = veekay::vec4{static_cast<float>(mode_index), 0.0f, 0.0f, 0.0f};
+        scene_uniforms.directional_light = lighting.directional_light;
+
+        uint32_t active_point_lights = (light_mode == LightMode::Point) ? lighting.point_light_count : 0u;
+        scene_uniforms.point_light_count = veekay::vec4{static_cast<float>(active_point_lights), 0.0f, 0.0f, 0.0f};
+        for (uint32_t i = 0; i < max_point_lights; ++i) {
+                scene_uniforms.point_lights[i] = lighting.point_lights[i];
+        }
+
+        std::vector<ModelUniforms> model_uniforms(models.size());
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                ModelUniforms& uniforms = model_uniforms[i];
+
+                uniforms.model = model.transform.matrix();
+                uniforms.ambient_color = veekay::vec4{
+                        shared_material.ambient_color.x,
+                        shared_material.ambient_color.y,
+                        shared_material.ambient_color.z,
+                        1.0f
+                };
+                uniforms.diffuse_color = veekay::vec4{
+                        shared_material.diffuse_color.x,
+                        shared_material.diffuse_color.y,
+                        shared_material.diffuse_color.z,
+                        1.0f
+                };
+                uniforms.specular_color_shininess = veekay::vec4{
+                        shared_material.specular_color.x,
+                        shared_material.specular_color.y,
+                        shared_material.specular_color.z,
+                        shared_material.shininess
+                };
+        }
+
+        *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        const size_t alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+        for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+                const ModelUniforms& uniforms = model_uniforms[i];
+
+                char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+                *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+        }
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
