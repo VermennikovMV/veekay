@@ -206,7 +206,13 @@ veekay::mat4 shadowProjectionMatrix(const veekay::vec3& light_direction, float p
         const veekay::vec3 normal{0.0f, 1.0f, 0.0f};
         const float plane_d = -plane_height;
 
-        const float dot = normal.x * direction.x + normal.y * direction.y + normal.z * direction.z;
+        float dot = normal.x * direction.x + normal.y * direction.y + normal.z * direction.z;
+
+        // Avoid unstable projections when the light grazes the plane (dot ~= 0)
+        constexpr float min_abs_dot = 0.05f;
+        if (std::abs(dot) < min_abs_dot) {
+                dot = std::copysign(min_abs_dot, dot == 0.0f ? 1.0f : dot);
+        }
 
         float m[4][4]{};
 
