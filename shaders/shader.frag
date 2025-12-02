@@ -6,6 +6,11 @@ layout (location = 2) in vec2 f_uv;
 
 layout (location = 0) out vec4 final_color;
 
+layout(push_constant) uniform PushConstants {
+    uint draw_shadow;
+    float ground_height;
+} push_constants;
+
 const uint MAX_POINT_LIGHTS = 4u;
 
 struct DirectionalLight {
@@ -75,6 +80,11 @@ vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir,
 }
 
 void main() {
+    if (push_constants.draw_shadow == 1u) {
+        final_color = vec4(0.0f, 0.0f, 0.0f, 0.45f);
+        return;
+    }
+
     vec3 normal = normalize(f_normal);
     vec3 texture_color = texture(model_texture, f_uv).rgb;
     vec3 ambient_albedo = model_uniforms.ambient_color.rgb * texture_color;

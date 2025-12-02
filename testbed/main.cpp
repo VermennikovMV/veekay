@@ -96,6 +96,12 @@ struct Model {
         float angular_speed = 1.0f;
         veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
         Material* material = nullptr;
+        bool casts_shadow = true;
+};
+
+struct PushConstants {
+        uint32_t draw_shadow = 0u;
+        float ground_height = -1.0f;
 };
 
 struct Camera {
@@ -119,6 +125,8 @@ struct Camera {
 
 // NOTE: Scene objects
 inline namespace {
+        constexpr float ground_height = -1.0f;
+
         Camera camera{
                 .position = {0.0f, -0.5f, -3.0f}
         };
@@ -213,6 +221,7 @@ inline namespace {
 	veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh ground_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -422,23 +431,30 @@ void initialize(VkCommandBuffer cmd) {
 		};
 
 		// NOTE: Let fragment shader write all the color channels
-		VkPipelineColorBlendAttachmentState attachment_info{
-			.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-			                  VK_COLOR_COMPONENT_G_BIT |
-			                  VK_COLOR_COMPONENT_B_BIT |
-			                  VK_COLOR_COMPONENT_A_BIT,
-		};
+                VkPipelineColorBlendAttachmentState attachment_info{
+                        .blendEnable = true,
+                        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                        .colorBlendOp = VK_BLEND_OP_ADD,
+                        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                        .alphaBlendOp = VK_BLEND_OP_ADD,
+                        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT,
+                };
 
-		// NOTE: Let rasterizer just copy resulting pixels onto a buffer, don't blend
-		VkPipelineColorBlendStateCreateInfo blend_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                // NOTE: Enable alpha blending to allow translucent shadows
+                VkPipelineColorBlendStateCreateInfo blend_info{
+                        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 
-			.logicOpEnable = false,
-			.logicOp = VK_LOGIC_OP_COPY,
+                        .logicOpEnable = false,
+                        .logicOp = VK_LOGIC_OP_COPY,
 
-			.attachmentCount = 1,
-			.pAttachments = &attachment_info
-		};
+                        .attachmentCount = 1,
+                        .pAttachments = &attachment_info
+                };
 
 		{
 			VkDescriptorPoolSize pools[] = {
@@ -509,11 +525,19 @@ void initialize(VkCommandBuffer cmd) {
 		}
 
                 // NOTE: Declare external data sources, only push constants this time
+                VkPushConstantRange push_constant_range{
+                        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                        .offset = 0,
+                        .size = sizeof(PushConstants),
+                };
+
                 VkPipelineLayoutCreateInfo layout_info{
                         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                         .setLayoutCount = 1,
-			.pSetLayouts = &descriptor_set_layout,
-		};
+                        .pSetLayouts = &descriptor_set_layout,
+                        .pushConstantRangeCount = 1,
+                        .pPushConstantRanges = &push_constant_range,
+                };
 
 		// NOTE: Create pipeline layout
 		if (vkCreatePipelineLayout(device, &layout_info,
@@ -623,6 +647,15 @@ void initialize(VkCommandBuffer cmd) {
                 .texture = missing_texture,
         });
 
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.08f, 0.08f, 0.08f},
+                .diffuse_color = veekay::vec3{0.6f, 0.6f, 0.6f},
+                .specular_color = veekay::vec3{0.15f, 0.15f, 0.15f},
+                .shininess = 8.0f,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+        });
+
         if (materials.size() > max_materials) {
                 std::cerr << "Too many materials for descriptor pool" << std::endl;
                 veekay::app.running = false;
@@ -711,8 +744,8 @@ void initialize(VkCommandBuffer cmd) {
                 std::vector<Vertex> vertices;
                 std::vector<uint32_t> indices;
 
-                // Base center
-                vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
+                // Base center (facing up)
+                vertices.push_back(Vertex{{0.0f, height, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}});
 
                 // Base ring vertices
                 for (uint32_t i = 0; i < segments; ++i) {
@@ -720,18 +753,18 @@ void initialize(VkCommandBuffer cmd) {
                         float x = radius * cosf(angle);
                         float z = radius * sinf(angle);
 
-                        vertices.push_back(Vertex{{x, 0.0f, z}, {0.0f, -1.0f, 0.0f}, {0.5f + x, 0.5f + z}});
+                        vertices.push_back(Vertex{{x, height, z}, {0.0f, 1.0f, 0.0f}, {0.5f + x, 0.5f + z}});
                 }
 
                 // Base indices (triangle fan)
                 for (uint32_t i = 0; i < segments; ++i) {
                         uint32_t next = (i + 1) % segments;
                         indices.push_back(0);
-                        indices.push_back(1 + next);
                         indices.push_back(1 + i);
+                        indices.push_back(1 + next);
                 }
 
-                const veekay::vec3 apex{0.0f, height, 0.0f};
+                const veekay::vec3 apex{0.0f, 0.0f, 0.0f};
 
                 for (uint32_t i = 0; i < segments; ++i) {
                         uint32_t next = (i + 1) % segments;
@@ -741,12 +774,12 @@ void initialize(VkCommandBuffer cmd) {
 
                         veekay::vec3 edge0 = b0 - apex;
                         veekay::vec3 edge1 = b1 - apex;
-                        veekay::vec3 normal = veekay::vec3::normalized(veekay::vec3::cross(edge1, edge0));
+                        veekay::vec3 normal = veekay::vec3::normalized(veekay::vec3::cross(edge0, edge1));
 
                         uint32_t start = static_cast<uint32_t>(vertices.size());
-                        vertices.push_back(Vertex{apex, normal, {0.5f, 1.0f}});
-                        vertices.push_back(Vertex{b0, normal, {0.0f, 0.0f}});
-                        vertices.push_back(Vertex{b1, normal, {1.0f, 0.0f}});
+                        vertices.push_back(Vertex{apex, normal, {0.5f, 0.0f}});
+                        vertices.push_back(Vertex{b0, normal, {0.0f, 1.0f}});
+                        vertices.push_back(Vertex{b1, normal, {1.0f, 1.0f}});
 
                         indices.push_back(start);
                         indices.push_back(start + 1);
@@ -764,11 +797,49 @@ void initialize(VkCommandBuffer cmd) {
                 cone_mesh.indices = uint32_t(indices.size());
         }
 
+        // NOTE: Ground plane mesh (quad)
+        {
+                const float size = 6.0f;
+                std::vector<Vertex> vertices = {
+                        {{-size, ground_height, -size}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{size, ground_height, -size}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{size, ground_height, size}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-size, ground_height, size}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices = {
+                        0, 1, 2,
+                        2, 3, 0
+                };
+
+                ground_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                ground_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                ground_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = ground_mesh,
+                .transform = Transform{
+                        .position = {0.0f, 0.0f, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+                .casts_shadow = false,
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {-1.5f, -0.5f, -2.0f},
+                        .position = {-1.5f, ground_height, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
                 .angular_speed = 0.0f,
@@ -779,7 +850,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {1.2f, -0.5f, -0.5f},
+                        .position = {1.2f, ground_height, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
                 .angular_speed = 0.0f,
@@ -790,7 +861,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 1.2f},
+                        .position = {0.0f, ground_height, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
                 .angular_speed = 0.0f,
@@ -868,6 +939,8 @@ void shutdown() {
         }
         delete missing_texture;
 
+        delete ground_mesh.index_buffer;
+        delete ground_mesh.vertex_buffer;
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
 
@@ -1090,14 +1163,16 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	const size_t model_uniorms_alignment =
 		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
 
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		const Mesh& mesh = model.mesh;
+        PushConstants push_constants{.draw_shadow = 0u, .ground_height = ground_height};
 
-		if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
-			current_vertex_buffer = mesh.vertex_buffer->buffer;
-			vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
-		}
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                const Mesh& mesh = model.mesh;
+
+                if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
+                        current_vertex_buffer = mesh.vertex_buffer->buffer;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
+                }
 
                 if (current_index_buffer != mesh.index_buffer->buffer) {
                         current_index_buffer = mesh.index_buffer->buffer;
@@ -1108,6 +1183,18 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
                                         0, 1, &model.material->descriptor_set, 1, &offset);
 
+                if (model.casts_shadow) {
+                        push_constants.draw_shadow = 1u;
+                        vkCmdPushConstants(cmd, pipeline_layout,
+                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, sizeof(PushConstants), &push_constants);
+                        vkCmdDrawIndexed(cmd, mesh.indices, 1, 0, 0, 0);
+                }
+
+                push_constants.draw_shadow = 0u;
+                vkCmdPushConstants(cmd, pipeline_layout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, sizeof(PushConstants), &push_constants);
                 vkCmdDrawIndexed(cmd, mesh.indices, 1, 0, 0, 0);
         }
 
