@@ -96,6 +96,8 @@ struct Model {
         float angular_speed = 1.0f;
         veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
         Material* material = nullptr;
+        veekay::mat4 override_model = veekay::mat4::identity();
+        bool use_override = false;
 };
 
 struct Camera {
@@ -119,12 +121,20 @@ struct Camera {
 
 // NOTE: Scene objects
 inline namespace {
+        constexpr float ground_height = -0.5f;
         Camera camera{
                 .position = {0.0f, -0.5f, -3.0f}
         };
 
         std::vector<Model> models;
         std::vector<Material> materials;
+
+        struct ShadowInstance {
+                size_t source_index;
+                size_t shadow_index;
+        };
+
+        std::vector<ShadowInstance> shadow_instances;
 
         struct LightingState {
                 veekay::vec4 ambient_color;
@@ -156,7 +166,7 @@ inline namespace {
                 return state;
         }();
 
-        LightMode light_mode = LightMode::Point;
+        LightMode light_mode = LightMode::Directional;
 
         bool mouse_captured = false;
         float camera_move_speed = 3.5f;
@@ -198,6 +208,60 @@ veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
         return right;
 }
 
+veekay::mat4 directionalShadowProjection(const veekay::vec3& light_direction, float plane_height) {
+        veekay::vec3 n{0.0f, 1.0f, 0.0f};
+        veekay::vec3 l = veekay::vec3::normalized(light_direction);
+
+        const float d = -plane_height;
+        float nl = veekay::vec3::dot(n, l);
+        const float epsilon = 1e-4f;
+        if (std::fabs(nl) < epsilon) {
+                nl = (nl < 0.0f ? -epsilon : epsilon);
+        }
+
+        veekay::mat4 projection{};
+
+        projection[0][0] = nl - n.x * l.x;
+        projection[0][1] = -n.x * l.y;
+        projection[0][2] = -n.x * l.z;
+        projection[0][3] = -n.x * d;
+
+        projection[1][0] = -n.y * l.x;
+        projection[1][1] = nl - n.y * l.y;
+        projection[1][2] = -n.y * l.z;
+        projection[1][3] = -n.y * d;
+
+        projection[2][0] = -n.z * l.x;
+        projection[2][1] = -n.z * l.y;
+        projection[2][2] = nl - n.z * l.z;
+        projection[2][3] = -n.z * d;
+
+        projection[3][0] = -l.x;
+        projection[3][1] = -l.y;
+        projection[3][2] = -l.z;
+        projection[3][3] = nl;
+
+        return projection;
+}
+
+veekay::mat4 shadowMatrixForModel(const Model& model, const veekay::vec3& light_direction) {
+        const veekay::mat4 model_matrix = model.transform.matrix();
+        veekay::vec3 normalized_dir = light_direction;
+        float len = veekay::vec3::length(normalized_dir);
+        if (len > std::numeric_limits<float>::epsilon()) {
+                normalized_dir = normalized_dir / len;
+        }
+
+        veekay::mat4 projection = directionalShadowProjection(normalized_dir, ground_height);
+
+        // NOTE: Keep the projected geometry locked to the ground plane so the shadow never falls
+        // under or above the surface when the light direction changes.
+        veekay::mat4 clamp_to_ground = veekay::mat4::translation({0.0f, ground_height, 0.0f}) *
+                                       veekay::mat4::scaling({1.0f, 0.0f, 1.0f});
+
+        return clamp_to_ground * projection * model_matrix;
+}
+
 // NOTE: Vulkan objects
 inline namespace {
 	VkShaderModule vertex_shader_module;
@@ -209,16 +273,20 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh plane_mesh;
 
-	veekay::graphics::Texture* missing_texture;
-	VkSampler missing_texture_sampler;
+        veekay::graphics::Texture* missing_texture;
+        VkSampler missing_texture_sampler;
 
-	veekay::graphics::Texture* texture;
-	VkSampler texture_sampler;
+        veekay::graphics::Texture* texture;
+        VkSampler texture_sampler;
+
+        veekay::graphics::Texture* white_texture;
+        VkSampler flat_sampler;
 }
 
 veekay::mat4 Transform::matrix() const {
@@ -239,7 +307,9 @@ veekay::mat4 Camera::view() const {
         auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(-rotation.y));
         auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(-rotation.z));
 
-        return rz * ry * rx * t;
+        auto flip = veekay::mat4::scaling({1.0f, -1.0f, 1.0f});
+
+        return flip * rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
@@ -372,13 +442,13 @@ void initialize(VkCommandBuffer cmd) {
 		// NOTE: Declare clockwise triangle order as front-facing
 		//       Discard triangles that are facing away
 		//       Fill triangles, don't draw lines instaed
-		VkPipelineRasterizationStateCreateInfo raster_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			.polygonMode = VK_POLYGON_MODE_FILL,
-			.cullMode = VK_CULL_MODE_BACK_BIT,
-			.frontFace = VK_FRONT_FACE_CLOCKWISE,
-			.lineWidth = 1.0f,
-		};
+                VkPipelineRasterizationStateCreateInfo raster_info{
+                        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                        .polygonMode = VK_POLYGON_MODE_FILL,
+                        .cullMode = VK_CULL_MODE_NONE,
+                        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+                        .lineWidth = 1.0f,
+                };
 
 		// NOTE: Use 1 sample per pixel
 		VkPipelineMultisampleStateCreateInfo sample_info{
@@ -580,6 +650,29 @@ void initialize(VkCommandBuffer cmd) {
                                                                 pixels);
         }
 
+        { // NOTE: Flat sampler and white texture for untextured surfaces
+                VkSamplerCreateInfo info{
+                        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                        .magFilter = VK_FILTER_LINEAR,
+                        .minFilter = VK_FILTER_LINEAR,
+                        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                };
+
+                if (vkCreateSampler(device, &info, nullptr, &flat_sampler) != VK_SUCCESS) {
+                        std::cerr << "Failed to create Vulkan flat sampler\n";
+                        veekay::app.running = false;
+                        return;
+                }
+
+                uint32_t pixel = 0xffffffff;
+                white_texture = new veekay::graphics::Texture(cmd, 1, 1,
+                                                               VK_FORMAT_B8G8R8A8_UNORM,
+                                                               &pixel);
+        }
+
         { // NOTE: Load image texture and create an additional sampler
                 VkSamplerCreateInfo info{
                         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -621,6 +714,24 @@ void initialize(VkCommandBuffer cmd) {
                 .shininess = 48.0f,
                 .sampler = missing_texture_sampler,
                 .texture = missing_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.12f, 0.12f, 0.12f},
+                .diffuse_color = veekay::vec3{0.4f, 0.4f, 0.4f},
+                .specular_color = veekay::vec3{0.0f, 0.0f, 0.0f},
+                .shininess = 8.0f,
+                .sampler = flat_sampler,
+                .texture = white_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.0f, 0.0f, 0.0f},
+                .diffuse_color = veekay::vec3{0.15f, 0.15f, 0.15f},
+                .specular_color = veekay::vec3{0.0f, 0.0f, 0.0f},
+                .shininess = 2.0f,
+                .sampler = flat_sampler,
+                .texture = white_texture,
         });
 
         if (materials.size() > max_materials) {
@@ -702,6 +813,31 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        // NOTE: Plane mesh initialization
+        {
+                std::vector<Vertex> vertices = {
+                        {{-5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{5.0f, 0.0f, -5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-5.0f, 0.0f, 5.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices = {
+                        0, 1, 2,
+                        2, 3, 0,
+                };
+
+                plane_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                plane_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                plane_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Cone mesh initialization
         {
                 const float radius = 0.5f;
@@ -766,9 +902,22 @@ void initialize(VkCommandBuffer cmd) {
 
         // NOTE: Add models to scene
         models.emplace_back(Model{
+                .mesh = plane_mesh,
+                .transform = Transform{
+                        .position = {0.0f, ground_height, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
+        const size_t first_cone_index = models.size();
+
+        models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {-1.5f, -0.5f, -2.0f},
+                        .position = {-1.5f, ground_height, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
                 .angular_speed = 0.0f,
@@ -779,7 +928,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {1.2f, -0.5f, -0.5f},
+                        .position = {1.2f, ground_height, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
                 .angular_speed = 0.0f,
@@ -790,13 +939,29 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 1.2f},
+                        .position = {0.0f, ground_height, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
                 .material = &materials[0],
         });
+
+        for (size_t i = 0; i < 3; ++i) {
+                const size_t source_index = first_cone_index + i;
+                Model shadow = models[source_index];
+                shadow.material = &materials[3];
+                shadow.angular_speed = 0.0f;
+                shadow.use_override = true;
+                shadow.override_model = shadowMatrixForModel(models[source_index],
+                                                             veekay::vec3{-lighting.directional_light.direction_intensity.x,
+                                                                          -lighting.directional_light.direction_intensity.y,
+                                                                          -lighting.directional_light.direction_intensity.z});
+
+                const size_t shadow_index = models.size();
+                models.emplace_back(shadow);
+                shadow_instances.push_back({source_index, shadow_index});
+        }
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
@@ -866,21 +1031,27 @@ void shutdown() {
         if (texture && texture != missing_texture) {
                 delete texture;
         }
+        delete white_texture;
         delete missing_texture;
 
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
 
-	delete model_uniforms_buffer;
-	delete scene_uniforms_buffer;
+        delete plane_mesh.index_buffer;
+        delete plane_mesh.vertex_buffer;
 
-	vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
-	vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+        delete model_uniforms_buffer;
+        delete scene_uniforms_buffer;
 
-	vkDestroyPipeline(device, pipeline, nullptr);
-	vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-	vkDestroyShaderModule(device, fragment_shader_module, nullptr);
-	vkDestroyShaderModule(device, vertex_shader_module, nullptr);
+        vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
+        vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
+
+        vkDestroyPipeline(device, pipeline, nullptr);
+        vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+        vkDestroyShaderModule(device, fragment_shader_module, nullptr);
+        vkDestroyShaderModule(device, vertex_shader_module, nullptr);
+
+        vkDestroySampler(device, flat_sampler, nullptr);
 }
 
 void update(double time) {
@@ -1007,12 +1178,25 @@ void update(double time) {
                 scene_uniforms.point_lights[i] = lighting.point_lights[i];
         }
 
+        veekay::vec3 shadow_light_dir{
+                -lighting.directional_light.direction_intensity.x,
+                -lighting.directional_light.direction_intensity.y,
+                -lighting.directional_light.direction_intensity.z,
+        };
+
+        for (const ShadowInstance& instance : shadow_instances) {
+                const Model& source = models[instance.source_index];
+                Model& shadow = models[instance.shadow_index];
+                shadow.transform = source.transform;
+                shadow.override_model = shadowMatrixForModel(source, shadow_light_dir);
+        }
+
         std::vector<ModelUniforms> model_uniforms(models.size());
         for (size_t i = 0, n = models.size(); i < n; ++i) {
                 const Model& model = models[i];
                 ModelUniforms& uniforms = model_uniforms[i];
 
-                uniforms.model = model.transform.matrix();
+                uniforms.model = model.use_override ? model.override_model : model.transform.matrix();
                 uniforms.ambient_color = veekay::vec4{
                         model.material->ambient_color.x,
                         model.material->ambient_color.y,
