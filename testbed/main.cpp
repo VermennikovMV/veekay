@@ -447,16 +447,15 @@ bool createShadowMap(VkCommandBuffer cmd) {
                 return false;
         }
 
-        VkSamplerCreateInfo sampler_info{
-                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-                .magFilter = VK_FILTER_LINEAR,
-                .minFilter = VK_FILTER_LINEAR,
-                .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-                .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
-        };
+        VkSamplerCreateInfo sampler_info{};
+        sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 
         if (vkCreateSampler(device, &sampler_info, nullptr, &shadow_sampler) != VK_SUCCESS) {
                 std::cerr << "Failed to create shadow sampler\n";
