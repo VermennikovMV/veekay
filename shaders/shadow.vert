@@ -1,23 +1,17 @@
 #version 450
 
 layout (location = 0) in vec3 v_position;
-layout (location = 1) in vec3 v_normal;
-layout (location = 2) in vec2 v_uv;
-
-layout (location = 0) out vec3 f_position;
-layout (location = 1) out vec3 f_normal;
-layout (location = 2) out vec2 f_uv;
 
 const uint MAX_POINT_LIGHTS = 4u;
 
 struct DirectionalLight {
-vec4 direction_intensity;
-vec4 color;
+    vec4 direction_intensity;
+    vec4 color;
 };
 
 struct PointLight {
-vec4 position_intensity;
-vec4 color;
+    vec4 position_intensity;
+    vec4 color;
 };
 
 layout (binding = 0, std140) uniform SceneUniforms {
@@ -41,13 +35,6 @@ layout (binding = 1, std140) uniform ModelUniforms {
 } model_uniforms;
 
 void main() {
-    vec4 position = model_uniforms.model * vec4(v_position, 1.0f);
-    mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
-vec3 normal = normalize(normal_matrix * v_normal);
-
-    gl_Position = scene.view_projection * position;
-
-f_position = position.xyz;
-f_normal = normal;
-f_uv = v_uv;
+    vec4 world_position = model_uniforms.model * vec4(v_position, 1.0f);
+    gl_Position = scene.light_view_projection * world_position;
 }
