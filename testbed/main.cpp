@@ -203,42 +203,26 @@ veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
 
 veekay::mat4 shadowProjectionMatrix(const veekay::vec3& light_direction, float plane_height) {
         const veekay::vec3 direction = veekay::vec3::normalized(light_direction);
-        const veekay::vec3 normal{0.0f, 1.0f, 0.0f};
-        const float plane_d = -plane_height;
 
-        float dot = normal.x * direction.x + normal.y * direction.y + normal.z * direction.z;
-
-        // Avoid unstable projections when the light grazes the plane (dot ~= 0)
-        constexpr float min_abs_dot = 0.05f;
-        if (std::abs(dot) < min_abs_dot) {
-                dot = std::copysign(min_abs_dot, dot == 0.0f ? 1.0f : dot);
+        float ly = direction.y;
+        constexpr float min_abs_ly = 0.05f;
+        if (std::abs(ly) < min_abs_ly) {
+                ly = std::copysign(min_abs_ly, ly == 0.0f ? 1.0f : ly);
         }
 
-        float m[4][4]{};
+        const float inv_ly = 1.0f / ly;
+        const float plane_scale = plane_height * inv_ly;
 
-        m[0][0] = dot - normal.x * direction.x;
-        m[0][1] = -normal.y * direction.x;
-        m[0][2] = -normal.z * direction.x;
-        m[0][3] = -plane_d * direction.x;
+        veekay::mat4 result = veekay::mat4::identity();
 
-        m[1][0] = -normal.x * direction.y;
-        m[1][1] = dot - normal.y * direction.y;
-        m[1][2] = -normal.z * direction.y;
-        m[1][3] = -plane_d * direction.y;
+        result[0][1] = -direction.x * inv_ly;
+        result[0][3] = direction.x * plane_scale;
 
-        m[2][0] = -normal.x * direction.z;
-        m[2][1] = -normal.y * direction.z;
-        m[2][2] = dot - normal.z * direction.z;
-        m[2][3] = -plane_d * direction.z;
+        result[1][1] = 0.0f;
+        result[1][3] = plane_height;
 
-        m[3][3] = dot;
-
-        veekay::mat4 result{};
-        for (int row = 0; row < 4; ++row) {
-                for (int col = 0; col < 4; ++col) {
-                        result[col][row] = m[row][col];
-                }
-        }
+        result[2][1] = -direction.z * inv_ly;
+        result[2][3] = direction.z * plane_scale;
 
         return result;
 }
