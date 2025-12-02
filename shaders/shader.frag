@@ -3,6 +3,7 @@
 layout (location = 0) in vec3 f_position;
 layout (location = 1) in vec3 f_normal;
 layout (location = 2) in vec2 f_uv;
+layout (location = 3) in vec4 f_light_space;
 
 layout (location = 0) out vec4 final_color;
 
@@ -20,10 +21,12 @@ vec4 color;
 
 layout (binding = 0, std140) uniform SceneUniforms {
     mat4 view_projection;
+    mat4 light_view_projection;
     vec4 camera_position;
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 light_mode;
+    vec4 render_flags;
     DirectionalLight directional_light;
     vec4 point_light_count;
     PointLight point_lights[MAX_POINT_LIGHTS];
@@ -37,6 +40,19 @@ layout (binding = 1, std140) uniform ModelUniforms {
 } model_uniforms;
 
 layout (binding = 2) uniform sampler2D model_texture;
+layout (binding = 3) uniform sampler2DShadow shadow_map;
+
+float calculateShadow(vec3 normal, vec3 light_dir) {
+    vec3 proj = f_light_space.xyz / f_light_space.w;
+    proj = proj * 0.5f + 0.5f;
+
+    if (proj.z > 1.0f) {
+        return 1.0f;
+    }
+
+    float bias = max(0.0025f * (1.0f - dot(normal, light_dir)), 0.0005f);
+    return texture(shadow_map, vec3(proj.xy, proj.z - bias));
+}
 
 vec3 calculateDirectional(vec3 normal, vec3 view_dir, vec3 diffuse_albedo, vec3 specular_color, float shininess) {
     vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
@@ -82,17 +98,19 @@ void main() {
     vec3 specular_color = model_uniforms.specular_color_shininess.rgb;
     float shininess = max(model_uniforms.specular_color_shininess.w, 1.0f);
     vec3 view_dir = normalize(scene.camera_position.xyz - f_position);
+    vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
+    float shadow_factor = calculateShadow(normal, light_dir);
     uint mode = uint(scene.light_mode.x + 0.5f);
     vec3 color = scene.ambient_color.rgb * ambient_albedo;
 
     if (mode == 0u) {
-        color += calculateDiffuse(f_position, normal, diffuse_albedo);
+        color += calculateDiffuse(f_position, normal, diffuse_albedo) * shadow_factor;
     } else if (mode == 1u) {
-        color += calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess);
+        color += calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess) * shadow_factor;
     } else if (mode == 2u) {
         uint count = min(uint(scene.point_light_count.x), MAX_POINT_LIGHTS);
         for (uint i = 0; i < count; ++i) {
-            color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess);
+            color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess) * shadow_factor;
         }
     }
 final_color = vec4(color, 1.0f);
