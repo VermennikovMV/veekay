@@ -414,11 +414,18 @@ void initialize(VkCommandBuffer cmd) {
 		//       Fill triangles, don't draw lines instaed
                 VkPipelineRasterizationStateCreateInfo raster_info{
                         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                        .pNext = nullptr,
+                        .flags = 0,
+                        .depthClampEnable = false,
+                        .rasterizerDiscardEnable = false,
                         .polygonMode = VK_POLYGON_MODE_FILL,
                         .cullMode = VK_CULL_MODE_BACK_BIT,
                         .frontFace = VK_FRONT_FACE_CLOCKWISE,
-                        .lineWidth = 1.0f,
                         .depthBiasEnable = true,
+                        .depthBiasConstantFactor = 0.0f,
+                        .depthBiasClamp = 0.0f,
+                        .depthBiasSlopeFactor = 0.0f,
+                        .lineWidth = 1.0f,
                 };
 
 		// NOTE: Use 1 sample per pixel
