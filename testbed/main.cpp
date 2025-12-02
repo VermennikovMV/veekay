@@ -870,10 +870,16 @@ void initialize(VkCommandBuffer cmd) {
                 },
         };
 
+        VkVertexInputBindingDescription shadow_buffer_binding{
+                .binding = 0,
+                .stride = sizeof(Vertex),
+                .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        };
+
         VkPipelineVertexInputStateCreateInfo shadow_input_state{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
                 .vertexBindingDescriptionCount = 1,
-                .pVertexBindingDescriptions = &buffer_binding,
+                .pVertexBindingDescriptions = &shadow_buffer_binding,
                 .vertexAttributeDescriptionCount = sizeof(shadow_attributes) / sizeof(shadow_attributes[0]),
                 .pVertexAttributeDescriptions = shadow_attributes,
         };
@@ -977,6 +983,18 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        VkPipelineInputAssemblyStateCreateInfo shadow_assembly_state_info{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        };
+
+        VkPipelineMultisampleStateCreateInfo shadow_sample_info{
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+                .sampleShadingEnable = false,
+                .minSampleShading = 1.0f,
+        };
+
         VkPipelineRenderingCreateInfo rendering_info{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
                 .colorAttachmentCount = 0,
@@ -990,10 +1008,10 @@ void initialize(VkCommandBuffer cmd) {
                 .stageCount = 1,
                 .pStages = &shadow_stage,
                 .pVertexInputState = &shadow_input_state,
-                .pInputAssemblyState = &assembly_state_info,
+                .pInputAssemblyState = &shadow_assembly_state_info,
                 .pViewportState = &shadow_viewport_info,
                 .pRasterizationState = &shadow_raster,
-                .pMultisampleState = &sample_info,
+                .pMultisampleState = &shadow_sample_info,
                 .pDepthStencilState = &shadow_depth,
                 .pColorBlendState = &shadow_blend,
                 .pDynamicState = &dyn_state_info,
