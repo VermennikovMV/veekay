@@ -305,8 +305,9 @@ veekay::mat4 Camera::view() const {
         auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(-rotation.x));
         auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(-rotation.y));
         auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(-rotation.z));
+        auto flip = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(180.0f));
 
-        return rz * ry * rx * t;
+        return flip * rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
