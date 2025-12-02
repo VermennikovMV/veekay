@@ -51,12 +51,14 @@ if(GLSLC_FOUND)
 		list(APPEND _SHADER_BINARIES ${SHADER_BINARY_PATH})
 	endmacro()
 
-	# To compile shader file, use compile_shader function with a file name
-	# of a shader inside shaders directory. See example below
+        # To compile shader file, use compile_shader function with a file name
+        # of a shader inside shaders directory. See example below
 
-	compile_shader(shader.vert)
-	compile_shader(shader.frag)
+        compile_shader(shader.vert)
+        compile_shader(shader.frag)
+        compile_shader(shadow.vert)
+        compile_shader(shadow.frag)
 
-	add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
-	add_dependencies(${PROJECT_NAME} shaders)
+        add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
+        add_dependencies(${PROJECT_NAME} shaders)
 endif()
