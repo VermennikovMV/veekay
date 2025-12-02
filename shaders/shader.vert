@@ -33,8 +33,9 @@ PointLight point_lights[MAX_POINT_LIGHTS];
 
 layout (binding = 1, std140) uniform ModelUniforms {
 mat4 model;
-vec4 albedo_specular;
-vec4 material_params;
+vec4 ambient_color;
+vec4 diffuse_color;
+vec4 specular_color_shininess;
 };
 
 void main() {

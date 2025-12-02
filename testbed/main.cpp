@@ -57,8 +57,9 @@ struct SceneUniforms {
 
 struct ModelUniforms {
         veekay::mat4 model;
-        veekay::vec4 albedo_specular;
-        veekay::vec4 material_params;
+        veekay::vec4 ambient_color;
+        veekay::vec4 diffuse_color;
+        veekay::vec4 specular_color_shininess;
 };
 
 struct Mesh {
@@ -79,11 +80,12 @@ struct Transform {
 struct Model {
         Mesh mesh;
         Transform transform;
-        veekay::vec3 albedo_color;
+        veekay::vec3 ambient_color;
+        veekay::vec3 diffuse_color;
+        veekay::vec3 specular_color;
+        float shininess = 32.0f;
         float angular_speed = 1.0f;
         veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
-        float specular_strength = 0.6f;
-        float shininess = 32.0f;
 };
 
 struct Camera {
@@ -671,7 +673,10 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {-1.5f, -0.5f, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
+                .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .specular_color = veekay::vec3{0.9f, 0.85f, 0.8f},
+                .shininess = 24.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -682,7 +687,10 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {1.2f, -0.5f, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .ambient_color = veekay::vec3{0.05f, 0.08f, 0.12f},
+                .diffuse_color = veekay::vec3{0.3f, 0.55f, 0.95f},
+                .specular_color = veekay::vec3{0.5f, 0.6f, 0.8f},
+                .shininess = 8.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -693,7 +701,10 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {0.0f, -0.5f, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
-                .albedo_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .ambient_color = veekay::vec3{0.08f, 0.09f, 0.08f},
+                .diffuse_color = veekay::vec3{0.5f, 0.75f, 0.45f},
+                .specular_color = veekay::vec3{0.25f, 0.5f, 0.25f},
+                .shininess = 48.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -723,13 +734,24 @@ void initialize(VkCommandBuffer cmd) {
                 ModelUniforms& uniforms = model_uniforms[i];
 
                 uniforms.model = model.transform.matrix();
-                uniforms.albedo_specular = veekay::vec4{
-                        model.albedo_color.x,
-                        model.albedo_color.y,
-                        model.albedo_color.z,
-                        model.specular_strength
+                uniforms.ambient_color = veekay::vec4{
+                        model.ambient_color.x,
+                        model.ambient_color.y,
+                        model.ambient_color.z,
+                        1.0f
                 };
-                uniforms.material_params = veekay::vec4{model.shininess, 0.0f, 0.0f, 0.0f};
+                uniforms.diffuse_color = veekay::vec4{
+                        model.diffuse_color.x,
+                        model.diffuse_color.y,
+                        model.diffuse_color.z,
+                        1.0f
+                };
+                uniforms.specular_color_shininess = veekay::vec4{
+                        model.specular_color.x,
+                        model.specular_color.y,
+                        model.specular_color.z,
+                        model.shininess
+                };
         }
 
         const size_t alignment =
@@ -802,6 +824,18 @@ void update(double time) {
         } else if (light_mode == LightMode::Point) {
                 ImGui::ColorEdit3("Point light color", lighting.point_lights[0].color.elements);
                 ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 40.0f, "%.1f");
+        }
+
+        ImGui::SeparatorText("Materials");
+        for (size_t i = 0; i < models.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::Text("Cone %zu", i + 1);
+                ImGui::ColorEdit3("Ambient", models[i].ambient_color.elements);
+                ImGui::ColorEdit3("Diffuse", models[i].diffuse_color.elements);
+                ImGui::ColorEdit3("Specular", models[i].specular_color.elements);
+                ImGui::SliderFloat("Shininess", &models[i].shininess, 1.0f, 128.0f, "%.0f");
+                ImGui::Spacing();
+                ImGui::PopID();
         }
         ImGui::End();
 
@@ -887,13 +921,24 @@ void update(double time) {
                 ModelUniforms& uniforms = model_uniforms[i];
 
                 uniforms.model = model.transform.matrix();
-                uniforms.albedo_specular = veekay::vec4{
-                        model.albedo_color.x,
-                        model.albedo_color.y,
-                        model.albedo_color.z,
-                        model.specular_strength
+                uniforms.ambient_color = veekay::vec4{
+                        model.ambient_color.x,
+                        model.ambient_color.y,
+                        model.ambient_color.z,
+                        1.0f
                 };
-                uniforms.material_params = veekay::vec4{model.shininess, 0.0f, 0.0f, 0.0f};
+                uniforms.diffuse_color = veekay::vec4{
+                        model.diffuse_color.x,
+                        model.diffuse_color.y,
+                        model.diffuse_color.z,
+                        1.0f
+                };
+                uniforms.specular_color_shininess = veekay::vec4{
+                        model.specular_color.x,
+                        model.specular_color.y,
+                        model.specular_color.z,
+                        model.shininess
+                };
         }
 
         *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
