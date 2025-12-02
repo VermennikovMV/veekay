@@ -34,6 +34,7 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 specular_color_shininess;
+    vec4 shadow_params;
 } model_uniforms;
 
 layout (binding = 2) uniform sampler2D model_texture;
@@ -76,6 +77,13 @@ vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir,
 
 void main() {
     vec3 normal = normalize(f_normal);
+    bool is_shadow = model_uniforms.shadow_params.x > 0.5f;
+
+    if (is_shadow) {
+        final_color = vec4(0.0f, 0.0f, 0.0f, 0.55f);
+        return;
+    }
+
     vec3 texture_color = texture(model_texture, f_uv).rgb;
     vec3 ambient_albedo = model_uniforms.ambient_color.rgb * texture_color;
     vec3 diffuse_albedo = model_uniforms.diffuse_color.rgb * texture_color;
@@ -95,5 +103,5 @@ void main() {
             color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess);
         }
     }
-final_color = vec4(color, 1.0f);
+    final_color = vec4(color, 1.0f);
 }
