@@ -21,7 +21,8 @@ namespace {
 
 constexpr uint32_t max_models = 1024;
 constexpr uint32_t max_point_lights = 4;
-constexpr uint32_t max_materials = 4;
+constexpr uint32_t max_materials = 6;
+constexpr float ground_height = -0.5f;
 
 enum class LightMode : uint32_t {
         Diffuse = 0,
@@ -124,7 +125,12 @@ inline namespace {
         };
 
         std::vector<Model> models;
+        std::vector<Model> shadow_models;
         std::vector<Material> materials;
+        std::vector<Model*> render_queue;
+
+        size_t ground_index = 0;
+        std::vector<size_t> shadow_source_indices;
 
         struct LightingState {
                 veekay::vec4 ambient_color;
@@ -198,6 +204,51 @@ veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
         return right;
 }
 
+void updateShadowModels() {
+        veekay::vec3 light_dir{
+                -lighting.directional_light.direction_intensity.x,
+                -lighting.directional_light.direction_intensity.y,
+                -lighting.directional_light.direction_intensity.z
+        };
+
+        float length = veekay::vec3::length(light_dir);
+        if (length > std::numeric_limits<float>::epsilon()) {
+                light_dir = light_dir / length;
+        }
+
+        for (size_t i = 0; i < shadow_models.size() && i < shadow_source_indices.size(); ++i) {
+                const Model& source = models[shadow_source_indices[i]];
+                Model& shadow = shadow_models[i];
+
+                const float denom = light_dir.y;
+                float t = 0.0f;
+                if (std::fabs(denom) > std::numeric_limits<float>::epsilon()) {
+                        t = (ground_height - source.transform.position.y) / denom;
+                }
+
+                veekay::vec3 projected = source.transform.position + light_dir * t;
+                shadow.transform.position = projected;
+                shadow.transform.rotation = source.transform.rotation;
+                shadow.transform.scale = {source.transform.scale.x, 0.02f, source.transform.scale.z};
+        }
+}
+
+void rebuildRenderQueue() {
+        render_queue.clear();
+
+        if (!models.empty()) {
+                render_queue.push_back(&models[ground_index]);
+        }
+
+        for (auto& shadow : shadow_models) {
+                render_queue.push_back(&shadow);
+        }
+
+        for (size_t index : shadow_source_indices) {
+                render_queue.push_back(&models[index]);
+        }
+}
+
 // NOTE: Vulkan objects
 inline namespace {
 	VkShaderModule vertex_shader_module;
@@ -209,10 +260,11 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh ground_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -623,6 +675,24 @@ void initialize(VkCommandBuffer cmd) {
                 .texture = missing_texture,
         });
 
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.05f, 0.07f, 0.05f},
+                .diffuse_color = veekay::vec3{0.1f, 0.25f, 0.1f},
+                .specular_color = veekay::vec3{0.15f, 0.15f, 0.15f},
+                .shininess = 8.0f,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.02f, 0.02f, 0.02f},
+                .diffuse_color = veekay::vec3{0.05f, 0.05f, 0.05f},
+                .specular_color = veekay::vec3{0.0f, 0.0f, 0.0f},
+                .shininess = 1.0f,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+        });
+
         if (materials.size() > max_materials) {
                 std::cerr << "Too many materials for descriptor pool" << std::endl;
                 veekay::app.running = false;
@@ -764,7 +834,42 @@ void initialize(VkCommandBuffer cmd) {
                 cone_mesh.indices = uint32_t(indices.size());
         }
 
+        // NOTE: Ground plane mesh initialization
+        {
+                const float size = 6.0f;
+
+                std::vector<Vertex> vertices = {
+                        {{-size, ground_height, -size}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{ size, ground_height, -size}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{ size, ground_height,  size}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-size, ground_height,  size}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices = {
+                        0, 1, 2,
+                        2, 3, 0
+                };
+
+                ground_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                ground_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                ground_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = ground_mesh,
+                .transform = Transform{},
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
@@ -798,6 +903,21 @@ void initialize(VkCommandBuffer cmd) {
                 .material = &materials[0],
         });
 
+        shadow_source_indices = {1, 2, 3};
+
+        for (size_t index : shadow_source_indices) {
+                shadow_models.push_back(Model{
+                        .mesh = cone_mesh,
+                        .transform = models[index].transform,
+                        .angular_speed = 0.0f,
+                        .rotation_axis = models[index].rotation_axis,
+                        .material = &materials[3],
+                });
+        }
+
+        updateShadowModels();
+        rebuildRenderQueue();
+
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
         scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
@@ -817,9 +937,9 @@ void initialize(VkCommandBuffer cmd) {
 
         *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
 
-        std::vector<ModelUniforms> model_uniforms(models.size());
-        for (size_t i = 0, n = models.size(); i < n; ++i) {
-                const Model& model = models[i];
+        std::vector<ModelUniforms> model_uniforms(render_queue.size());
+        for (size_t i = 0, n = render_queue.size(); i < n; ++i) {
+                const Model& model = *render_queue[i];
                 ModelUniforms& uniforms = model_uniforms[i];
 
                 uniforms.model = model.transform.matrix();
@@ -870,6 +990,8 @@ void shutdown() {
 
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
+        delete ground_mesh.index_buffer;
+        delete ground_mesh.vertex_buffer;
 
 	delete model_uniforms_buffer;
 	delete scene_uniforms_buffer;
@@ -992,6 +1114,9 @@ void update(double time) {
 
         camera.position += movement * (move_speed * delta_time);
 
+        updateShadowModels();
+        rebuildRenderQueue();
+
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
         scene_uniforms.view_projection = camera.view_projection(aspect_ratio);
@@ -1007,9 +1132,9 @@ void update(double time) {
                 scene_uniforms.point_lights[i] = lighting.point_lights[i];
         }
 
-        std::vector<ModelUniforms> model_uniforms(models.size());
-        for (size_t i = 0, n = models.size(); i < n; ++i) {
-                const Model& model = models[i];
+        std::vector<ModelUniforms> model_uniforms(render_queue.size());
+        for (size_t i = 0, n = render_queue.size(); i < n; ++i) {
+                const Model& model = *render_queue[i];
                 ModelUniforms& uniforms = model_uniforms[i];
 
                 uniforms.model = model.transform.matrix();
@@ -1087,12 +1212,12 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	VkBuffer current_vertex_buffer = VK_NULL_HANDLE;
 	VkBuffer current_index_buffer = VK_NULL_HANDLE;
 
-	const size_t model_uniorms_alignment =
-		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+        const size_t model_uniorms_alignment =
+                veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
 
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Model& model = models[i];
-		const Mesh& mesh = model.mesh;
+        for (size_t i = 0, n = render_queue.size(); i < n; ++i) {
+                const Model& model = *render_queue[i];
+                const Mesh& mesh = model.mesh;
 
 		if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
 			current_vertex_buffer = mesh.vertex_buffer->buffer;
