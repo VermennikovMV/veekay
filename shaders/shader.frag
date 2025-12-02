@@ -20,6 +20,7 @@ vec4 color;
 
 layout (binding = 0, std140) uniform SceneUniforms {
     mat4 view_projection;
+    mat4 light_view_projection;
     vec4 camera_position;
     vec4 ambient_color;
     vec4 diffuse_color;
@@ -38,6 +39,7 @@ layout (binding = 1, std140) uniform ModelUniforms {
 } model_uniforms;
 
 layout (binding = 2) uniform sampler2D model_texture;
+layout (binding = 3) uniform sampler2D shadow_map;
 
 vec3 calculateDirectional(vec3 normal, vec3 view_dir, vec3 diffuse_albedo, vec3 specular_color, float shininess) {
     vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
@@ -75,6 +77,27 @@ vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir,
     return diffuse + specular;
 }
 
+float calculateShadow(vec3 world_position) {
+    vec4 light_space = scene.light_view_projection * vec4(world_position, 1.0f);
+    vec3 proj_coords = light_space.xyz / light_space.w;
+    proj_coords = proj_coords * 0.5f + 0.5f;
+
+    if (proj_coords.z > 1.0f) {
+        return 1.0f;
+    }
+
+    if (proj_coords.x < 0.0f || proj_coords.x > 1.0f ||
+        proj_coords.y < 0.0f || proj_coords.y > 1.0f) {
+        return 1.0f;
+    }
+
+    float closest_depth = texture(shadow_map, proj_coords.xy).r;
+    float bias = 0.0015f;
+    float current_depth = proj_coords.z;
+
+    return current_depth - bias > closest_depth ? 0.0f : 1.0f;
+}
+
 void main() {
     vec3 normal = normalize(f_normal);
     bool use_texture = model_uniforms.material_options.x > 0.5f;
@@ -86,16 +109,19 @@ void main() {
     vec3 view_dir = normalize(scene.camera_position.xyz - f_position);
     uint mode = uint(scene.light_mode.x + 0.5f);
     vec3 color = scene.ambient_color.rgb * ambient_albedo;
+    vec3 lighting_color = vec3(0.0f);
 
     if (mode == 0u) {
-        color += calculateDiffuse(f_position, normal, diffuse_albedo);
+        lighting_color += calculateDiffuse(f_position, normal, diffuse_albedo);
     } else if (mode == 1u) {
-        color += calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess);
+        lighting_color += calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess);
     } else if (mode == 2u) {
         uint count = min(uint(scene.point_light_count.x), MAX_POINT_LIGHTS);
         for (uint i = 0; i < count; ++i) {
-            color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess);
+            lighting_color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess);
         }
     }
+    float shadow = calculateShadow(f_position);
+    color += lighting_color * shadow;
 final_color = vec4(color, 1.0f);
 }
