@@ -36,6 +36,7 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 specular_color_shininess;
+    vec4 material_options;
 } model_uniforms;
 
 void main() {
