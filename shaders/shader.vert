@@ -21,29 +21,29 @@ vec4 color;
 };
 
 layout (binding = 0, std140) uniform SceneUniforms {
-mat4 view_projection;
-vec4 camera_position;
-vec4 ambient_color;
-vec4 diffuse_color;
-vec4 light_mode;
-DirectionalLight directional_light;
-vec4 point_light_count;
-PointLight point_lights[MAX_POINT_LIGHTS];
-};
+    mat4 view_projection;
+    vec4 camera_position;
+    vec4 ambient_color;
+    vec4 diffuse_color;
+    vec4 light_mode;
+    DirectionalLight directional_light;
+    vec4 point_light_count;
+    PointLight point_lights[MAX_POINT_LIGHTS];
+} scene;
 
 layout (binding = 1, std140) uniform ModelUniforms {
-mat4 model;
-vec4 ambient_color;
-vec4 diffuse_color;
-vec4 specular_color_shininess;
-};
+    mat4 model;
+    vec4 ambient_color;
+    vec4 diffuse_color;
+    vec4 specular_color_shininess;
+} model_uniforms;
 
 void main() {
-vec4 position = model * vec4(v_position, 1.0f);
-mat3 normal_matrix = transpose(inverse(mat3(model)));
+    vec4 position = model_uniforms.model * vec4(v_position, 1.0f);
+    mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
 vec3 normal = normalize(normal_matrix * v_normal);
 
-gl_Position = view_projection * position;
+    gl_Position = scene.view_projection * position;
 
 f_position = position.xyz;
 f_normal = normal;
