@@ -732,12 +732,18 @@ void initialize(VkCommandBuffer cmd) {
                 vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
 
                 // Base ring vertices
+                std::vector<veekay::vec3> side_normals(segments);
+                float slope = radius / height;
                 for (uint32_t i = 0; i < segments; ++i) {
                         float angle = (float(i) / float(segments)) * 2.0f * float(M_PI);
                         float x = radius * cosf(angle);
                         float z = radius * sinf(angle);
 
                         vertices.push_back(Vertex{{x, 0.0f, z}, {0.0f, -1.0f, 0.0f}, {0.5f + x, 0.5f + z}});
+
+                        // Precompute smooth side normals so light falloff is visible on cones
+                        veekay::vec3 base_normal = veekay::vec3::normalized(veekay::vec3{x, slope, z});
+                        side_normals[i] = base_normal;
                 }
 
                 // Base indices (triangle fan)
@@ -756,14 +762,14 @@ void initialize(VkCommandBuffer cmd) {
                         veekay::vec3 b0 = vertices[1 + i].position;
                         veekay::vec3 b1 = vertices[1 + next].position;
 
-                        veekay::vec3 edge0 = b0 - apex;
-                        veekay::vec3 edge1 = b1 - apex;
-                        veekay::vec3 normal = veekay::vec3::normalized(veekay::vec3::cross(edge1, edge0));
+                        veekay::vec3 normal0 = side_normals[i];
+                        veekay::vec3 normal1 = side_normals[next];
+                        veekay::vec3 apex_normal = veekay::vec3::normalized(normal0 + normal1);
 
                         uint32_t start = static_cast<uint32_t>(vertices.size());
-                        vertices.push_back(Vertex{apex, normal, {0.5f, 1.0f}});
-                        vertices.push_back(Vertex{b0, normal, {0.0f, 0.0f}});
-                        vertices.push_back(Vertex{b1, normal, {1.0f, 0.0f}});
+                        vertices.push_back(Vertex{apex, apex_normal, {0.5f, 1.0f}});
+                        vertices.push_back(Vertex{b0, normal0, {0.0f, 0.0f}});
+                        vertices.push_back(Vertex{b1, normal1, {1.0f, 0.0f}});
 
                         indices.push_back(start);
                         indices.push_back(start + 1);
