@@ -80,12 +80,15 @@ struct Transform {
 struct Model {
         Mesh mesh;
         Transform transform;
+        float angular_speed = 1.0f;
+        veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
+};
+
+struct Material {
         veekay::vec3 ambient_color;
         veekay::vec3 diffuse_color;
         veekay::vec3 specular_color;
         float shininess = 32.0f;
-        float angular_speed = 1.0f;
-        veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f};
 };
 
 struct Camera {
@@ -144,6 +147,13 @@ inline namespace {
                 state.point_light_count = 1u;
                 return state;
         }();
+
+        Material shared_material = {
+                .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
+                .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
+                .specular_color = veekay::vec3{0.9f, 0.85f, 0.8f},
+                .shininess = 24.0f,
+        };
 
         LightMode light_mode = LightMode::Point;
 
@@ -673,10 +683,6 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {-1.5f, -0.5f, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
-                .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
-                .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
-                .specular_color = veekay::vec3{0.9f, 0.85f, 0.8f},
-                .shininess = 24.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -687,10 +693,6 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {1.2f, -0.5f, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
-                .ambient_color = veekay::vec3{0.05f, 0.08f, 0.12f},
-                .diffuse_color = veekay::vec3{0.3f, 0.55f, 0.95f},
-                .specular_color = veekay::vec3{0.5f, 0.6f, 0.8f},
-                .shininess = 8.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -701,10 +703,6 @@ void initialize(VkCommandBuffer cmd) {
                         .position = {0.0f, -0.5f, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
-                .ambient_color = veekay::vec3{0.08f, 0.09f, 0.08f},
-                .diffuse_color = veekay::vec3{0.5f, 0.75f, 0.45f},
-                .specular_color = veekay::vec3{0.25f, 0.5f, 0.25f},
-                .shininess = 48.0f,
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
         });
@@ -735,22 +733,22 @@ void initialize(VkCommandBuffer cmd) {
 
                 uniforms.model = model.transform.matrix();
                 uniforms.ambient_color = veekay::vec4{
-                        model.ambient_color.x,
-                        model.ambient_color.y,
-                        model.ambient_color.z,
+                        shared_material.ambient_color.x,
+                        shared_material.ambient_color.y,
+                        shared_material.ambient_color.z,
                         1.0f
                 };
                 uniforms.diffuse_color = veekay::vec4{
-                        model.diffuse_color.x,
-                        model.diffuse_color.y,
-                        model.diffuse_color.z,
+                        shared_material.diffuse_color.x,
+                        shared_material.diffuse_color.y,
+                        shared_material.diffuse_color.z,
                         1.0f
                 };
                 uniforms.specular_color_shininess = veekay::vec4{
-                        model.specular_color.x,
-                        model.specular_color.y,
-                        model.specular_color.z,
-                        model.shininess
+                        shared_material.specular_color.x,
+                        shared_material.specular_color.y,
+                        shared_material.specular_color.z,
+                        shared_material.shininess
                 };
         }
 
@@ -827,16 +825,10 @@ void update(double time) {
         }
 
         ImGui::SeparatorText("Materials");
-        for (size_t i = 0; i < models.size(); ++i) {
-                ImGui::PushID(static_cast<int>(i));
-                ImGui::Text("Cone %zu", i + 1);
-                ImGui::ColorEdit3("Ambient", models[i].ambient_color.elements);
-                ImGui::ColorEdit3("Diffuse", models[i].diffuse_color.elements);
-                ImGui::ColorEdit3("Specular", models[i].specular_color.elements);
-                ImGui::SliderFloat("Shininess", &models[i].shininess, 1.0f, 128.0f, "%.0f");
-                ImGui::Spacing();
-                ImGui::PopID();
-        }
+        ImGui::ColorEdit3("Ambient", shared_material.ambient_color.elements);
+        ImGui::ColorEdit3("Diffuse", shared_material.diffuse_color.elements);
+        ImGui::ColorEdit3("Specular", shared_material.specular_color.elements);
+        ImGui::SliderFloat("Shininess", &shared_material.shininess, 1.0f, 128.0f, "%.0f");
         ImGui::End();
 
         static double previous_time = time;
@@ -922,22 +914,22 @@ void update(double time) {
 
                 uniforms.model = model.transform.matrix();
                 uniforms.ambient_color = veekay::vec4{
-                        model.ambient_color.x,
-                        model.ambient_color.y,
-                        model.ambient_color.z,
+                        shared_material.ambient_color.x,
+                        shared_material.ambient_color.y,
+                        shared_material.ambient_color.z,
                         1.0f
                 };
                 uniforms.diffuse_color = veekay::vec4{
-                        model.diffuse_color.x,
-                        model.diffuse_color.y,
-                        model.diffuse_color.z,
+                        shared_material.diffuse_color.x,
+                        shared_material.diffuse_color.y,
+                        shared_material.diffuse_color.z,
                         1.0f
                 };
                 uniforms.specular_color_shininess = veekay::vec4{
-                        model.specular_color.x,
-                        model.specular_color.y,
-                        model.specular_color.z,
-                        model.shininess
+                        shared_material.specular_color.x,
+                        shared_material.specular_color.y,
+                        shared_material.specular_color.z,
+                        shared_material.shininess
                 };
         }
 
