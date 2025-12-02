@@ -137,7 +137,7 @@ inline namespace {
                 };
                 state.point_lights = {
                         PointLight{
-                                .position_intensity = veekay::vec4{0.0f, 0.0f, 0.0f, 8.0f},
+                                .position_intensity = veekay::vec4{-1.5f, 0.0f, -1.0f, 8.0f},
                                 .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
                         },
                         PointLight{},
@@ -887,10 +887,6 @@ void update(double time) {
         }
 
         camera.position += movement * (move_speed * delta_time);
-
-        lighting.point_lights[0].position_intensity.x = 0.0f;
-        lighting.point_lights[0].position_intensity.y = 0.0f;
-        lighting.point_lights[0].position_intensity.z = 0.0f;
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
         SceneUniforms scene_uniforms{};
