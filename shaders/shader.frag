@@ -3,6 +3,7 @@
 layout (location = 0) in vec3 f_position;
 layout (location = 1) in vec3 f_normal;
 layout (location = 2) in vec2 f_uv;
+layout (location = 3) in vec4 f_light_position;
 
 layout (location = 0) out vec4 final_color;
 
@@ -27,6 +28,8 @@ layout (binding = 0, std140) uniform SceneUniforms {
     DirectionalLight directional_light;
     vec4 point_light_count;
     PointLight point_lights[MAX_POINT_LIGHTS];
+    mat4 light_view_projection;
+    vec4 shadow_params;
 } scene;
 
 layout (binding = 1, std140) uniform ModelUniforms {
@@ -37,6 +40,20 @@ layout (binding = 1, std140) uniform ModelUniforms {
 } model_uniforms;
 
 layout (binding = 2) uniform sampler2D model_texture;
+layout (binding = 3) uniform sampler2D shadow_map;
+
+float shadowFactor() {
+    vec3 proj = f_light_position.xyz / f_light_position.w;
+    vec2 uv = proj.xy * 0.5f + 0.5f;
+
+    if (uv.x < 0.0f || uv.x > 1.0f || uv.y < 0.0f || uv.y > 1.0f) {
+        return 1.0f;
+    }
+
+    float closest = texture(shadow_map, uv).r;
+    float current = proj.z - scene.shadow_params.x;
+    return current <= closest ? 1.0f : 0.25f;
+}
 
 vec3 calculateDirectional(vec3 normal, vec3 view_dir, vec3 diffuse_albedo, vec3 specular_color, float shininess) {
     vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
@@ -88,7 +105,8 @@ void main() {
     if (mode == 0u) {
         color += calculateDiffuse(f_position, normal, diffuse_albedo);
     } else if (mode == 1u) {
-        color += calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess);
+        float visibility = shadowFactor();
+        color += visibility * calculateDirectional(normal, view_dir, diffuse_albedo, specular_color, shininess);
     } else if (mode == 2u) {
         uint count = min(uint(scene.point_light_count.x), MAX_POINT_LIGHTS);
         for (uint i = 0; i < count; ++i) {
