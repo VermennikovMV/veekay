@@ -243,6 +243,23 @@ veekay::mat4 shadowProjectionMatrix(const veekay::vec3& light_direction, float p
         return result;
 }
 
+veekay::mat4 baseShadowMatrix(const Transform& transform, float plane_height) {
+        veekay::vec3 position = transform.position;
+        position.y = plane_height;
+
+        veekay::vec3 scale = transform.scale;
+        scale.y = 0.0f;
+
+        auto t = veekay::mat4::translation(position);
+        auto s = veekay::mat4::scaling(scale);
+
+        auto rx = veekay::mat4::rotation({1.0f, 0.0f, 0.0f}, toRadians(transform.rotation.x));
+        auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(transform.rotation.y));
+        auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(transform.rotation.z));
+
+        return t * rz * ry * rx * s;
+}
+
 veekay::vec3 lightDirectionForShadows() {
         if (light_mode == LightMode::Point && lighting.point_light_count > 0u) {
                 const veekay::vec3 point_position{
@@ -634,7 +651,7 @@ void initialize(VkCommandBuffer cmd) {
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
         model_uniforms_buffer = new veekay::graphics::Buffer(
-                2 * max_models * veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms)),
+                3 * max_models * veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms)),
                 nullptr,
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
@@ -900,11 +917,25 @@ void initialize(VkCommandBuffer cmd) {
 
         const veekay::mat4 shadow_projection = shadowProjectionMatrix(lightDirectionForShadows(), shadow_plane_height);
 
-        std::vector<ModelUniforms> model_uniforms(models.size() * 2);
+        std::vector<ModelUniforms> model_uniforms(models.size() * 3);
         for (size_t i = 0, n = models.size(); i < n; ++i) {
                 const Model& model = models[i];
-                ModelUniforms& uniforms = model_uniforms[i];
 
+                ModelUniforms& base_shadow = model_uniforms[i];
+                base_shadow.model = baseShadowMatrix(model.transform, shadow_plane_height);
+                base_shadow.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.shadow_params = veekay::vec4{1.0f, 0.55f, 0.0f, 0.0f};
+
+                ModelUniforms& shadow_uniforms = model_uniforms[i + models.size()];
+                shadow_uniforms.model = shadow_projection * model.transform.matrix();
+                shadow_uniforms.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.shadow_params = veekay::vec4{1.0f, 0.35f, 0.0f, 0.0f};
+
+                ModelUniforms& uniforms = model_uniforms[i + models.size() * 2];
                 uniforms.model = model.transform.matrix();
                 uniforms.ambient_color = veekay::vec4{
                         model.material->ambient_color.x,
@@ -925,13 +956,6 @@ void initialize(VkCommandBuffer cmd) {
                         model.material->shininess
                 };
                 uniforms.shadow_params = veekay::vec4{0.0f, 0.0f, 0.0f, 0.0f};
-
-                ModelUniforms& shadow_uniforms = model_uniforms[i + models.size()];
-                shadow_uniforms.model = shadow_projection * model.transform.matrix();
-                shadow_uniforms.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.shadow_params = veekay::vec4{1.0f, 0.45f, 0.0f, 0.0f};
         }
 
         const size_t alignment =
@@ -1100,11 +1124,25 @@ void update(double time) {
 
         const veekay::mat4 shadow_projection = shadowProjectionMatrix(lightDirectionForShadows(), shadow_plane_height);
 
-        std::vector<ModelUniforms> model_uniforms(models.size() * 2);
+        std::vector<ModelUniforms> model_uniforms(models.size() * 3);
         for (size_t i = 0, n = models.size(); i < n; ++i) {
                 const Model& model = models[i];
-                ModelUniforms& uniforms = model_uniforms[i];
 
+                ModelUniforms& base_shadow = model_uniforms[i];
+                base_shadow.model = baseShadowMatrix(model.transform, shadow_plane_height);
+                base_shadow.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                base_shadow.shadow_params = veekay::vec4{1.0f, 0.55f, 0.0f, 0.0f};
+
+                ModelUniforms& shadow_uniforms = model_uniforms[i + models.size()];
+                shadow_uniforms.model = shadow_projection * model.transform.matrix();
+                shadow_uniforms.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
+                shadow_uniforms.shadow_params = veekay::vec4{1.0f, 0.35f, 0.0f, 0.0f};
+
+                ModelUniforms& uniforms = model_uniforms[i + models.size() * 2];
                 uniforms.model = model.transform.matrix();
                 uniforms.ambient_color = veekay::vec4{
                         model.material->ambient_color.x,
@@ -1125,13 +1163,6 @@ void update(double time) {
                         model.material->shininess
                 };
                 uniforms.shadow_params = veekay::vec4{0.0f, 0.0f, 0.0f, 0.0f};
-
-                ModelUniforms& shadow_uniforms = model_uniforms[i + models.size()];
-                shadow_uniforms.model = shadow_projection * model.transform.matrix();
-                shadow_uniforms.ambient_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.diffuse_color = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.specular_color_shininess = veekay::vec4{0.0f, 0.0f, 0.0f, 1.0f};
-                shadow_uniforms.shadow_params = veekay::vec4{1.0f, 0.45f, 0.0f, 0.0f};
         }
 
         *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
@@ -1205,6 +1236,27 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
                         vkCmdBindIndexBuffer(cmd, current_index_buffer, zero_offset, VK_INDEX_TYPE_UINT32);
                 }
 
+                uint32_t offset = static_cast<uint32_t>(i * model_uniorms_alignment);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+                                        0, 1, &model.material->descriptor_set, 1, &offset);
+
+                vkCmdDrawIndexed(cmd, mesh.indices, 1, 0, 0, 0);
+        }
+
+        for (size_t i = 0, n = models.size(); i < n; ++i) {
+                const Model& model = models[i];
+                const Mesh& mesh = model.mesh;
+
+                if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
+                        current_vertex_buffer = mesh.vertex_buffer->buffer;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
+                }
+
+                if (current_index_buffer != mesh.index_buffer->buffer) {
+                        current_index_buffer = mesh.index_buffer->buffer;
+                        vkCmdBindIndexBuffer(cmd, current_index_buffer, zero_offset, VK_INDEX_TYPE_UINT32);
+                }
+
                 uint32_t offset = static_cast<uint32_t>((models.size() + i) * model_uniorms_alignment);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
                                         0, 1, &model.material->descriptor_set, 1, &offset);
@@ -1216,17 +1268,17 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
                 const Model& model = models[i];
                 const Mesh& mesh = model.mesh;
 
-		if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
-			current_vertex_buffer = mesh.vertex_buffer->buffer;
-			vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
-		}
+                if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
+                        current_vertex_buffer = mesh.vertex_buffer->buffer;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
+                }
 
                 if (current_index_buffer != mesh.index_buffer->buffer) {
                         current_index_buffer = mesh.index_buffer->buffer;
                         vkCmdBindIndexBuffer(cmd, current_index_buffer, zero_offset, VK_INDEX_TYPE_UINT32);
                 }
 
-                uint32_t offset = i * model_uniorms_alignment;
+                uint32_t offset = static_cast<uint32_t>((models.size() * 2 + i) * model_uniorms_alignment);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
                                         0, 1, &model.material->descriptor_set, 1, &offset);
 
