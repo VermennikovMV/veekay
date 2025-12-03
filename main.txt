@@ -156,8 +156,7 @@ struct ShadowPass {
 
   veekay::mat4 view_projection{};
 
-> Андрей:
-VkFormat depth_format = VK_FORMAT_UNDEFINED;
+  VkFormat depth_format = VK_FORMAT_UNDEFINED;
   VkImage depth_image = VK_NULL_HANDLE;
   VkDeviceMemory depth_memory = VK_NULL_HANDLE;
   VkImageView depth_view = VK_NULL_HANDLE;
@@ -290,8 +289,6 @@ veekay::mat4 Transform::matrix() const {
 
   return t * r * s;
 }
-
-> Андрей:
 veekay::vec3 transformPoint(const veekay::mat4& matrix, const veekay::vec3& point) {
   const float x = point.x;
   const float y = point.y;
@@ -375,9 +372,8 @@ bool rayIntersectsAabb(const veekay::vec3& origin, const veekay::vec3& direction
     const float min_component = axis == 0 ? aabb_min.x : (axis == 1 ? aabb_min.y : aabb_min.z);
     const float max_component = axis == 0 ? aabb_max.x : (axis == 1 ? aabb_max.y : aabb_max.z);
 
-> Андрей:
-if (std::fabs(dir_component) < 1e-4f) {
-      if (origin_component < min_component  origin_component > max_component)
+    if (std::fabs(dir_component) < 1e-4f) {
+      if (origin_component < min_component || origin_component > max_component)
         return false;
       continue;
     }
@@ -515,10 +511,7 @@ namespace {
   void clampOrbitState(OrbitState& state) {
     state.distance = std::clamp(state.distance, 0.5f, 100.0f);
     state.pitch = std::clamp(state.pitch, -89.0f, 89.0f);
-    if (sta
-
-> Андрей:
-te.yaw > 360.0f)
+    if (state.yaw > 360.0f)
       state.yaw -= 360.0f;
     else if (state.yaw < -360.0f)
       state.yaw += 360.0f;
@@ -568,7 +561,7 @@ te.yaw > 360.0f)
       front = veekay::vec3::normalized(front);
 
     float safe_distance = distance;
-    if (!std::isfinite(safe_distance)  safe_distance < 0.5f)
+    if (!std::isfinite(safe_distance) || safe_distance < 0.5f)
       safe_distance = std::max(orbit_state.distance, 5.0f);
 
     const float clamped_y = std::clamp(front.y, -1.0f, 1.0f);
@@ -644,7 +637,6 @@ void captureOrbitStateFromCamera(float desired_distance) {
   updateOrbitStateFromTarget(focus_point, front, focus_distance);
 }
 
-> Андрей:
 void captureOrbitStateFromCamera(const veekay::vec3& focus_point, float desired_distance) {
   veekay::vec3 front = focus_point - camera.position;
   if (veekay::vec3::squaredLength(front) < 1e-4f)
@@ -755,9 +747,7 @@ bool createShadowPassResources(VkDevice device, VkPhysicalDevice physical_device
     .allocationSize = requirements.size,
     .memoryTypeIndex = index,
   };
-
-> Андрей:
-if (vkAllocateMemory(device, &allocate_info, nullptr, &pass.depth_memory) != VK_SUCCESS) {
+  if (vkAllocateMemory(device, &allocate_info, nullptr, &pass.depth_memory) != VK_SUCCESS) {
     std::cerr << "Failed to allocate shadow map memory\n";
     destroyShadowPassResources(device, pass);
     return false;
@@ -875,10 +865,7 @@ void initialize(VkCommandBuffer cmd) {
   // Shadow map resources
   VkFormat shadow_depth_format = chooseShadowDepthFormat(physical_device);
   if (shadow_depth_format == VK_FORMAT_UNDEFINED) {
-    std::cerr <
-
-> Андрей:
-< "Failed to find supported depth format for shadow map\n";
+    std::cerr << "Failed to find supported depth format for shadow map\n";
     veekay::app.running = false;
     return;
   }
@@ -993,8 +980,6 @@ void initialize(VkCommandBuffer cmd) {
       .sampleShadingEnable = false,
       .minSampleShading = 1.0f,
     };
-
-> Андрей:
 VkViewport viewport{
       .x = 0.0f,
       .y = 0.0f,
@@ -1081,8 +1066,6 @@ VkViewport viewport{
         return;
       }
     }
-
-> Андрей:
 // NOTE: Descriptor set layout specification
     {
       VkDescriptorSetLayoutBinding bindings[] = {
@@ -1198,8 +1181,6 @@ VkViewport viewport{
       veekay::app.running = false;
       return;
     }
-
-> Андрей:
 // NOTE: Shadow map pipeline (depth only, dynamic rendering)
     shadow.vertex_shader_module = loadShaderModule("./shaders/shadow.vert.spv");
     if (!shadow.vertex_shader_module) {
@@ -1316,8 +1297,6 @@ VkViewport viewport{
         return;
       }
     }
-
-> Андрей:
 {
       VkPipelineLayoutCreateInfo layout_info{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -1439,9 +1418,7 @@ VkViewport viewport{
       .descriptorSetCount = 1,
       .pSetLayouts = &shadow.descriptor_set_layout,
     };
-
-> Андрей:
-if (vkAllocateDescriptorSets(device, &info, &spot_shadows[i].descriptor_set) != VK_SUCCESS) {
+    if (vkAllocateDescriptorSets(device, &info, &spot_shadows[i].descriptor_set) != VK_SUCCESS) {
       std::cerr << "Failed to allocate spot shadow descriptor set " << i << "\n";
       veekay::app.running = false;
       return;
@@ -1555,8 +1532,6 @@ if (vkAllocateDescriptorSets(device, &info, &spot_shadows[i].descriptor_set) != 
       16, 17, 18, 18, 19, 16,
       20, 21, 22, 22, 23, 20,
     };
-
-> Андрей:
 computeMeshBounds(cube_mesh, vertices);
 
     cube_mesh.vertex_buffer = new veekay::graphics::Buffer(
@@ -1678,8 +1653,6 @@ computeMeshBounds(cube_mesh, vertices);
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
       };
     }
-
-> Андрей:
 VkWriteDescriptorSet write_infos[] = {
       {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1791,8 +1764,6 @@ void shutdown() {
 
 void update(double time) {
   ImGuiIO& io = ImGui::GetIO();
-
-> Андрей:
 ImGui::Begin("Camera");
   const char* mode_labels[] = {"FreeFly (FPV)", "Orbit (Look-At)"};
   int mode_index = static_cast<int>(camera_mode);
@@ -1868,8 +1839,6 @@ ImGui::Begin("Camera");
   if (ImGui::Button("Add spot light") && spot_lights.size() < max_spot_lights) {
     spot_lights.emplace_back(SpotLight{});
   }
-
-> Андрей:
 for (size_t i = 0; i < spot_lights.size(); ++i) {
     ImGui::PushID(static_cast<int>(i + 1000));
     std::string header = "Spot light " + std::to_string(i);
@@ -1916,7 +1885,7 @@ for (size_t i = 0; i < spot_lights.size(); ++i) {
   previous_time = time;
 
   using namespace veekay::input;
-  const bool block_camera = io.WantCaptureMouse  io.WantCaptureKeyboard;
+  const bool block_camera = io.WantCaptureMouse || io.WantCaptureKeyboard;
   const float base_speed = 3.5f;
   float move_speed = base_speed * static_cast<float>(delta_time);
   if (io.KeyShift)
@@ -1963,9 +1932,7 @@ for (size_t i = 0; i < spot_lights.size(); ++i) {
         free_fly_state.position -= up * move_speed;
         changed = true;
       }
-
-> Андрей:
-if (changed)
+      if (changed)
         applyCameraState(CameraMode::FreeFly);
     } else {
       bool orbit_dirty = false;
@@ -2071,9 +2038,7 @@ if (changed)
 
     std::vector<SpotShadowCandidate> candidates;
     candidates.reserve(spot_lights.size());
-
-> Андрей:
-for (size_t i = 0; i < spot_lights.size(); ++i) {
+    for (size_t i = 0; i < spot_lights.size(); ++i) {
       const SpotLight& light = spot_lights[i];
       const veekay::vec3 to_camera = camera.position - light.position;
       const float distance = veekay::vec3::length(to_camera);
@@ -2149,9 +2114,7 @@ for (size_t i = 0; i < spot_lights.size(); ++i) {
   for (size_t i = 0, n = models.size(); i < n; ++i) {
     const Model& model = models[i];
     ModelUniforms& uniforms = model_uniforms[i];
-
-> Андрей:
-uniforms.model = model.transform.matrix();
+    uniforms.model = model.transform.matrix();
     uniforms.albedo_shininess = {
       model.material.albedo_color.x,
       model.material.albedo_color.y,
