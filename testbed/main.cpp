@@ -57,6 +57,11 @@ struct PointLight {
         veekay::vec4 color;
 };
 
+struct SharedStorageData {
+        veekay::vec4 lighting_scale;
+        veekay::vec4 uv_tiling_attenuation;
+};
+
 struct SceneUniforms {
         veekay::mat4 view_projection;
         veekay::vec4 camera_position;
@@ -125,6 +130,10 @@ inline namespace {
 
         std::vector<Model> models;
         std::vector<Material> materials;
+
+        float shared_lighting_scale = 1.0f;
+        float shared_uv_tiling = 1.0f;
+        float shared_attenuation_factor = 1.0f;
 
         struct LightingState {
                 veekay::vec4 ambient_color;
@@ -209,8 +218,9 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* shared_storage_buffer;
 
         Mesh cone_mesh;
 
@@ -441,7 +451,7 @@ void initialize(VkCommandBuffer cmd) {
 		};
 
 		{
-			VkDescriptorPoolSize pools[] = {
+                        VkDescriptorPoolSize pools[] = {
                                 {
                                         .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                         .descriptorCount = max_materials,
@@ -452,6 +462,10 @@ void initialize(VkCommandBuffer cmd) {
                                 },
                                 {
                                         .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                        .descriptorCount = max_materials,
+                                },
+                                {
+                                        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                         .descriptorCount = max_materials,
                                 }
                         };
@@ -491,6 +505,12 @@ void initialize(VkCommandBuffer cmd) {
                                         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                         .descriptorCount = 1,
                                         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                                },
+                                {
+                                        .binding = 3,
+                                        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                        .descriptorCount = 1,
+                                        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                 },
                         };
 
@@ -556,6 +576,11 @@ void initialize(VkCommandBuffer cmd) {
                 max_models * veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms)),
                 nullptr,
                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+        shared_storage_buffer = new veekay::graphics::Buffer(
+                sizeof(SharedStorageData),
+                nullptr,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
         // NOTE: This texture and sampler is used when texture could not be loaded
         {
@@ -645,18 +670,23 @@ void initialize(VkCommandBuffer cmd) {
                         return;
                 }
 
-                VkDescriptorBufferInfo buffer_infos[] = {
-                        {
-                                .buffer = scene_uniforms_buffer->buffer,
-                                .offset = 0,
-                                .range = sizeof(SceneUniforms),
-                        },
-                        {
-                                .buffer = model_uniforms_buffer->buffer,
-                                .offset = 0,
-                                .range = sizeof(ModelUniforms),
-                        },
-                };
+                        VkDescriptorBufferInfo buffer_infos[] = {
+                                {
+                                        .buffer = scene_uniforms_buffer->buffer,
+                                        .offset = 0,
+                                        .range = sizeof(SceneUniforms),
+                                },
+                                {
+                                        .buffer = model_uniforms_buffer->buffer,
+                                        .offset = 0,
+                                        .range = sizeof(ModelUniforms),
+                                },
+                                {
+                                        .buffer = shared_storage_buffer->buffer,
+                                        .offset = 0,
+                                        .range = sizeof(SharedStorageData),
+                                },
+                        };
 
                 for (size_t i = 0; i < materials.size(); ++i) {
                         materials[i].descriptor_set = descriptor_sets[i];
@@ -693,6 +723,15 @@ void initialize(VkCommandBuffer cmd) {
                                         .descriptorCount = 1,
                                         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                         .pImageInfo = &image_info,
+                                },
+                                {
+                                        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                        .dstSet = materials[i].descriptor_set,
+                                        .dstBinding = 3,
+                                        .dstArrayElement = 0,
+                                        .descriptorCount = 1,
+                                        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                        .pBufferInfo = &buffer_infos[2],
                                 },
                         };
 
@@ -817,6 +856,11 @@ void initialize(VkCommandBuffer cmd) {
 
         *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
 
+        SharedStorageData shared_data{};
+        shared_data.lighting_scale = veekay::vec4{shared_lighting_scale, shared_lighting_scale, shared_lighting_scale, 1.0f};
+        shared_data.uv_tiling_attenuation = veekay::vec4{shared_uv_tiling, shared_attenuation_factor, 0.0f, 0.0f};
+        *(SharedStorageData*)shared_storage_buffer->mapped_region = shared_data;
+
         std::vector<ModelUniforms> model_uniforms(models.size());
         for (size_t i = 0, n = models.size(); i < n; ++i) {
                 const Model& model = models[i];
@@ -871,8 +915,9 @@ void shutdown() {
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
 
-	delete model_uniforms_buffer;
-	delete scene_uniforms_buffer;
+        delete shared_storage_buffer;
+        delete model_uniforms_buffer;
+        delete scene_uniforms_buffer;
 
 	vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
 	vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
@@ -921,6 +966,11 @@ void update(double time) {
                 ImGui::ColorEdit3("Point light color", lighting.point_lights[0].color.elements);
                 ImGui::SliderFloat("Point light intensity", &lighting.point_lights[0].position_intensity.w, 0.0f, 40.0f, "%.1f");
         }
+
+        ImGui::SeparatorText("Shared storage controls");
+        ImGui::SliderFloat("Lighting scale", &shared_lighting_scale, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("UV tiling", &shared_uv_tiling, 0.25f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Point attenuation factor", &shared_attenuation_factor, 0.1f, 4.0f, "%.2f");
 
         ImGui::SeparatorText("Materials");
         for (size_t i = 0; i < materials.size(); ++i) {
@@ -1034,6 +1084,11 @@ void update(double time) {
         }
 
         *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
+
+        SharedStorageData shared_data{};
+        shared_data.lighting_scale = veekay::vec4{shared_lighting_scale, shared_lighting_scale, shared_lighting_scale, 1.0f};
+        shared_data.uv_tiling_attenuation = veekay::vec4{shared_uv_tiling, shared_attenuation_factor, 0.0f, 0.0f};
+        *(SharedStorageData*)shared_storage_buffer->mapped_region = shared_data;
 
         const size_t alignment =
                 veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));

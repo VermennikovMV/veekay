@@ -38,9 +38,14 @@ layout (binding = 1, std140) uniform ModelUniforms {
 
 layout (binding = 2) uniform sampler2D model_texture;
 
+layout (binding = 3, std430) buffer SharedStorageData {
+    vec4 lighting_scale;
+    vec4 uv_tiling_attenuation;
+} shared_data;
+
 vec3 calculateDirectional(vec3 normal, vec3 view_dir, vec3 diffuse_albedo, vec3 specular_color, float shininess) {
     vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
-    vec3 light_color = scene.directional_light.color.rgb * scene.directional_light.direction_intensity.w;
+    vec3 light_color = scene.directional_light.color.rgb * scene.directional_light.direction_intensity.w * shared_data.lighting_scale.x;
 float diff = max(dot(normal, light_dir), 0.0f);
 vec3 diffuse = diff * light_color * diffuse_albedo;
 vec3 half_vector = normalize(light_dir + view_dir);
@@ -53,9 +58,9 @@ vec3 calculateDiffuse(vec3 position, vec3 normal, vec3 diffuse_albedo) {
     vec3 offset = -position;
     float distance = length(offset);
     vec3 light_dir = distance > 0.0f ? offset / distance : vec3(0.0f, 1.0f, 0.0f);
-    float attenuation = 1.0f / (1.0f + distance * distance);
+    float attenuation = 1.0f / (1.0f + shared_data.uv_tiling_attenuation.y * distance * distance);
     float intensity = max(scene.diffuse_color.w, 0.0f);
-    vec3 light_color = scene.diffuse_color.rgb * intensity * attenuation;
+    vec3 light_color = scene.diffuse_color.rgb * intensity * attenuation * shared_data.lighting_scale.x;
 float diff = max(dot(normal, light_dir), 0.0f);
 return diff * light_color * diffuse_albedo;
 }
@@ -64,8 +69,8 @@ vec3 calculatePoint(PointLight light, vec3 position, vec3 normal, vec3 view_dir,
     vec3 offset = light.position_intensity.xyz - position;
     float distance = length(offset);
     vec3 light_dir = distance > 0.0f ? offset / distance : vec3(0.0f, 1.0f, 0.0f);
-    float attenuation = light.position_intensity.w / (1.0f + distance * distance);
-    vec3 light_color = light.color.rgb * attenuation;
+    float attenuation = light.position_intensity.w / (1.0f + shared_data.uv_tiling_attenuation.y * distance * distance);
+    vec3 light_color = light.color.rgb * attenuation * shared_data.lighting_scale.x;
     float diff = max(dot(normal, light_dir), 0.0f);
     vec3 diffuse = diff * light_color * diffuse_albedo;
     vec3 half_vector = normalize(light_dir + view_dir);
@@ -83,7 +88,7 @@ void main() {
     float shininess = max(model_uniforms.specular_color_shininess.w, 1.0f);
     vec3 view_dir = normalize(scene.camera_position.xyz - f_position);
     uint mode = uint(scene.light_mode.x + 0.5f);
-    vec3 color = scene.ambient_color.rgb * ambient_albedo;
+    vec3 color = scene.ambient_color.rgb * ambient_albedo * shared_data.lighting_scale.x;
 
     if (mode == 0u) {
         color += calculateDiffuse(f_position, normal, diffuse_albedo);
