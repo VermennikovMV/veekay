@@ -373,8 +373,8 @@ bool rayIntersectsAabb(const veekay::vec3& origin, const veekay::vec3& direction
     const float min_component = axis == 0 ? aabb_min.x : (axis == 1 ? aabb_min.y : aabb_min.z);
     const float max_component = axis == 0 ? aabb_max.x : (axis == 1 ? aabb_max.y : aabb_max.z);
 
-if (std::fabs(dir_component) < 1e-4f) {
-      if (origin_component < min_component  origin_component > max_component)
+    if (std::fabs(dir_component) < 1e-4f) {
+      if (origin_component < min_component || origin_component > max_component)
         return false;
       continue;
     }
@@ -512,9 +512,7 @@ namespace {
   void clampOrbitState(OrbitState& state) {
     state.distance = std::clamp(state.distance, 0.5f, 100.0f);
     state.pitch = std::clamp(state.pitch, -89.0f, 89.0f);
-    if (sta
-
-te.yaw > 360.0f)
+    if (state.yaw > 360.0f)
       state.yaw -= 360.0f;
     else if (state.yaw < -360.0f)
       state.yaw += 360.0f;
@@ -564,7 +562,7 @@ te.yaw > 360.0f)
       front = veekay::vec3::normalized(front);
 
     float safe_distance = distance;
-    if (!std::isfinite(safe_distance)  safe_distance < 0.5f)
+    if (!std::isfinite(safe_distance) || safe_distance < 0.5f)
       safe_distance = std::max(orbit_state.distance, 5.0f);
 
     const float clamped_y = std::clamp(front.y, -1.0f, 1.0f);
@@ -631,7 +629,7 @@ void captureOrbitStateFromCamera(float desired_distance) {
   const bool hit = findOrbitFocusPoint(camera.position, front, focus_point, focus_distance);
   if (!hit) {
     float fallback_distance = desired_distance > 0.0f ? desired_distance : orbit_state.distance;
-    if (!std::isfinite(fallback_distance)  fallback_distance < 0.5f)
+    if (!std::isfinite(fallback_distance) || fallback_distance < 0.5f)
       fallback_distance = 5.0f;
     focus_distance = fallback_distance;
     focus_point = camera.position + front * focus_distance;
@@ -751,7 +749,7 @@ bool createShadowPassResources(VkDevice device, VkPhysicalDevice physical_device
     .memoryTypeIndex = index,
   };
 
-if (vkAllocateMemory(device, &allocate_info, nullptr, &pass.depth_memory) != VK_SUCCESS) {
+  if (vkAllocateMemory(device, &allocate_info, nullptr, &pass.depth_memory) != VK_SUCCESS) {
     std::cerr << "Failed to allocate shadow map memory\n";
     destroyShadowPassResources(device, pass);
     return false;
@@ -869,9 +867,7 @@ void initialize(VkCommandBuffer cmd) {
   // Shadow map resources
   VkFormat shadow_depth_format = chooseShadowDepthFormat(physical_device);
   if (shadow_depth_format == VK_FORMAT_UNDEFINED) {
-    std::cerr <
-
-< "Failed to find supported depth format for shadow map\n";
+    std::cerr << "Failed to find supported depth format for shadow map\n";
     veekay::app.running = false;
     return;
   }
@@ -1900,7 +1896,7 @@ for (size_t i = 0; i < spot_lights.size(); ++i) {
   previous_time = time;
 
   using namespace veekay::input;
-  const bool block_camera = io.WantCaptureMouse  io.WantCaptureKeyboard;
+  const bool block_camera = io.WantCaptureMouse || io.WantCaptureKeyboard;
   const float base_speed = 3.5f;
   float move_speed = base_speed * static_cast<float>(delta_time);
   if (io.KeyShift)
