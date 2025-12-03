@@ -38,6 +38,11 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 specular_color_shininess;
 } model_uniforms;
 
+layout (binding = 3, std430) buffer SharedStorageData {
+    vec4 lighting_scale;
+    vec4 uv_tiling_attenuation;
+} shared_data;
+
 void main() {
     vec4 position = model_uniforms.model * vec4(v_position, 1.0f);
     mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
@@ -47,5 +52,6 @@ vec3 normal = normalize(normal_matrix * v_normal);
 
 f_position = position.xyz;
 f_normal = normal;
-f_uv = v_uv;
+    float uv_scale = max(shared_data.uv_tiling_attenuation.x, 0.01f);
+    f_uv = v_uv * uv_scale;
 }
