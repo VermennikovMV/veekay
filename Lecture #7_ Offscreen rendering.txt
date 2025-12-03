@@ -1,0 +1,338 @@
+C O M P U T E R    G R A P H I C S
+Рисование вне экрана
+
+
+Объявляем объекты изображений для цвета и глубины
+/* Цветной компонент изображения */
+VkFormat os_color_image_format;       // Формат пикселей
+VkImage os_color_image;               // Объект изображения
+VkDeviceMemory os_color_image_memory; // Память изображения
+VkImageView os_color_image_view;      // Логическое изображение
+
+/* Глубинный компонент изображения */
+VkFormat os_depth_image_format;
+VkImage os_depth_image;
+VkDeviceMemory os_depth_image_memory;
+VkImageView os_depth_image_view;
+
+
+
+Создаем объект изображения для цветного компонента
+os_color_image_format = VK_FORMAT_R8G8B8A8_UNORM; 
+		
+VkImageCreateInfo info{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	.imageType = VK_IMAGE_TYPE_2D, // 2D изображение
+	.format = os_color_image_format, // Имеет формат R8G8B8A8_UNORM
+// Имеет размеры окна приложения:
+	.extent = { veekay::app.window_width, veekay::app.window_height, 1 },
+	.mipLevels = 1, // Имеет один mip, т.е. основное изображение
+	.arrayLayers = 1, // Изображение единственное, т.е. нет массива
+	.samples = VK_SAMPLE_COUNT_1_BIT, // Нет мульти сэмплирования
+	.tiling = VK_IMAGE_TILING_OPTIMAL, // Оптимальное расположение в памяти GPU
+	.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | // Для рисования в него и
+			 VK_IMAGE_USAGE_SAMPLED_BIT,          // можно читать из шейдера
+};
+
+vkCreateImage(device, &info, nullptr, &os_color_image);
+
+Выделяем память для изображения
+// Память для изображения будет лежать эксклюзивно на GPU
+VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+// Ищем подходящую память... много строк было опущено, см. презу про графический конвейер, там этот код есть
+
+VkMemoryAllocateInfo info{
+	.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+	.allocationSize = requirements.size,
+	.memoryTypeIndex = index,
+};
+
+vkAllocateMemory(device, &info, nullptr, &os_color_image_memory);
+vkBindImageMemory(device, os_color_image, os_color_image_memory, 0);
+
+VkImageViewCreateInfo info{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+	.image = os_color_image,
+	.viewType = VK_IMAGE_VIEW_TYPE_2D,
+	.format = os_color_image_format,
+	.subresourceRange{
+		// Назначен на хранение цветов пикселей
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.baseMipLevel = 0,
+		.levelCount = 1,
+		.baseArrayLayer = 0,
+		.layerCount = 1,
+	},
+};
+
+vkCreateImageView(device, &info, nullptr, &os_color_image_view);
+Создаем логическое изображение из физического
+
+VkFormat candidates[] = { // Набрали распространенных кандидатов
+	VK_FORMAT_D32_SFLOAT,
+	VK_FORMAT_D32_SFLOAT_S8_UINT,
+VK_FORMAT_D24_UNORM_S8_UINT,
+};
+
+os_depth_image_format = VK_FORMAT_UNDEFINED;
+
+for (const auto& f : candidates) {
+	VkFormatProperties properties;
+	vkGetPhysicalDeviceFormatProperties(physical_device, f, &properties);
+
+	// Если формат поддерживает оптимальное расположение в памяти GPU, то выбираем его
+	if (properties.optimalTilingFeatures & 
+         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+			os_depth_image_format = f;
+			break;
+	}
+}
+Находим оптимальный формат для изображ. глубины
+
+VkImageCreateInfo info{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+	.imageType = VK_IMAGE_TYPE_2D,
+	.format = os_depth_image_format,
+	.extent = { veekay::app.window_width, veekay::app.window_height, 1 },
+	.mipLevels = 1,
+	.arrayLayers = 1,
+	.samples = VK_SAMPLE_COUNT_1_BIT,
+	.tiling = VK_IMAGE_TILING_OPTIMAL,
+	// Использование в целях записи/тестов глубины + чтение из шейдера
+	.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+			  VK_IMAGE_USAGE_SAMPLED_BIT,
+};
+
+vkCreateImage(device, &info, nullptr, &os_depth_image);
+Создаем изображение для компонента глубины
+
+Выделяем для него память тоже
+VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+// Ищем подходящую память... много строк было опущено, см. презу про графический конвейер, там этот код есть
+
+VkMemoryAllocateInfo info{
+	.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+	.allocationSize = requirements.size,
+	.memoryTypeIndex = index,
+};
+
+vkAllocateMemory(device, &info, nullptr, &os_depth_image_memory);
+vkBindImageMemory(device, os_depth_image, os_depth_image_memory, 0);
+
+VkImageViewCreateInfo info{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+	.image = os_depth_image,
+	.viewType = VK_IMAGE_VIEW_TYPE_2D,
+	.format = os_depth_image_format,
+	.subresourceRange{
+// Назначен на хранение глубины пикселей
+		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+		.baseMipLevel = 0,
+		.levelCount = 1,
+		.baseArrayLayer = 0,
+		.layerCount = 1,
+	},
+};
+
+vkCreateImageView(device, &info, nullptr, &os_depth_image_view);
+Создаем логическое изображение для комп-та глубины
+
+Нам нужны VkRenderPass, VkFramebuffer и VkPipeline
+VkRenderPass расскажет, в каком формате будут изображения и когда
+VkFramebuffer свяжет множество VkImageView с описанием VkRenderPass
+VkPipeline при создании возьмёт VkRenderPass, чтобы знать какой формат изображений нужен для рисования
+
+Но нам они больше не понадобятся! Теперь в Vulkan есть расширение Dynamic Rendering, которое “упрощает” работу с рисованием в изображения
+Для Dynamic Rendering нам нужен всего один(!) VkPipeline, где будут описаны форматы изображений для рисования, привязка описывается потом, когда начнем рисовать
+Как теперь в них начать рисовать?
+
+Как раньше это выглядело?
+
+// Определяем указатели на функции из расширения API Vulkan
+PFN_vkCmdBeginRenderingKHR vkCmdBeginRenderingKHR;
+PFN_vkCmdEndRenderingKHR vkCmdEndRenderingKHR;
+
+// Определяем специальный конвейер для дин. рендеринга
+VkPipeline offscreen_pipeline;
+
+// Получаем адреса этих функций в самом начале работы приложения
+void initialize(VkCommandBuffer cmd) {
+  vkCmdBeginRenderingKHR = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(
+		vkGetDeviceProcAddr(device, "vkCmdBeginRenderingKHR"));
+
+  vkCmdEndRenderingKHR = reinterpret_cast<PFN_vkCmdEndRenderingKHR>(
+		vkGetDeviceProcAddr(device, "vkCmdEndRenderingKHR"));
+
+...
+Загружаем функции дин. рендеринга
+
+// Указываем, что теперь из конвейера можно изменять с помощью vkCmdSet..
+VkDynamicState dyn_states[2] = {
+VK_DYNAMIC_STATE_VIEWPORT, // Область отрисовки
+	VK_DYNAMIC_STATE_SCISSOR,  // Область выреза
+};
+
+VkPipelineDynamicStateCreateInfo dyn_state_info{
+.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+.dynamicStateCount = sizeof(dyn_states) / sizeof(dyn_states[0]),
+	.pDynamicStates = dyn_states,
+};
+
+// Теперь эти данные выше больше не статичны, их можно задать каждый кадр
+VkPipelineViewportStateCreateInfo viewport_info{
+	.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+.viewportCount = 1,
+	.scissorCount = 1,
+// Просто говорим сколько их, но не инициализируем
+};
+Описываем динамические параметры граф. конвейера
+
+// Какие форматы компонентов изображения стоит ожидать граф. конвейеру
+VkPipelineRenderingCreateInfoKHR format_info{
+.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+	.colorAttachmentCount = 1,
+	.pColorAttachmentFormats = &os_color_image_format,
+	.depthAttachmentFormat = os_depth_image_format,
+};
+
+VkGraphicsPipelineCreateInfo info{
+	.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+	.pNext = &format_info, // VkPipelineRenderingCreateInfo является расширением
+	.pViewportState = &viewport_info,
+	.pDynamicState = &dyn_state_info,
+// Остальные члены структуры опущены для краткости
+	// Тут больше нет упоминания про veekay::app.vk_render_pass, потому что он нам больше не нужен
+};
+
+vkCreateGraphicsPipelines(device, nullptr, 1, &info, nullptr, &offscreen_pipeline);
+Описываем форматы изображений для граф. конвейера
+
+Был создан новый граф. конвейер с описанием форматов изображений и динамическими параметрами
+Теперь на нас ложится задача переводить изображения в форматы, оптимальные для определенной задачи (рисовать в изображение, читать из изображения), потому что раньше за нас это делал VkRenderPass, но теперь его нет…
+Теперь во время отрисовки нужно указывать, не объект, содержащий указатели на изображения VkFramebuffer, а сами изображения, которые мы будем рисовать
+Теперь в функции render() пишем следующее…
+Промежуточные итоги
+
+VkImageMemoryBarrier barrier{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	.srcAccessMask = 0,
+	.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, // Запись должна быть доступна после барьера!
+	.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,                // Переводим из неопределенного формата в формат
+	.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // оптимальный для записи цвета граф. конвейеру
+	.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	.image = os_color_image,
+	.subresourceRange{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.baseArrayLayer = 0,
+		.layerCount = 1,
+	},
+};
+vkCmdPipelineBarrier(cmd,
+                     // Останавливаемся перед тем, как происходит запись в изображение
+		         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, // Ждём, пока эта же стадия не завершится
+		         0, 0, nullptr, 0, nullptr, 1, &barrier);
+Переводим изображение цвет. комп-та в оптимальный формат GPU для записи туда пикселей граф. конвейером
+
+
+VkImageMemoryBarrier barrier{
+  .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+  .srcAccessMask = 0, 
+  .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, // Запись должна быть доступна после барьера!
+  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, // Переводим из неопределенного формата в формат
+  .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // оптимальный для записи глубины конвейеру
+  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+  .image = os_depth_image, // Переводим конечно же текстуру/изображение глубины
+  .subresourceRange{
+	.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, // Это изображение точно используется для глубины :^)
+	.levelCount = 1,
+	.baseArrayLayer = 0,
+	.layerCount = 1,
+  },
+};
+		
+vkCmdPipelineBarrier(cmd,
+// Останавливаемся перед тем, как начнет проходить отсечение пикселей в тесте глубину
+		         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+		         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+		         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		         0, 0, nullptr, 0, nullptr, 1, &barrier);
+Переводим изображение глубинного комп-та в оптимальный формат GPU для теста и записи глубины пикселей
+
+// Описание цветного комопнента: где его логическое изображение и формат
+VkRenderingAttachmentInfoKHR color_attachment{
+	.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+	.imageView = os_color_image_view,
+	.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+// Очищаем цвет в начале, записываем результат в конце
+	.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+	.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+	.clearValue = { .color = {1.0f, 1.0f, 1.0f, 0.0f} },
+};
+
+// Описание глубинного компонента: где его логическое изображение и формат
+VkRenderingAttachmentInfoKHR depth_attachment{
+.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+	.imageView = os_depth_image_view,
+	.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+// Очищаем глубину в начале, записываем результат в конце
+	.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+	.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+	.clearValue = { .depthStencil = {1.0f, 0} },
+};
+Описываем привязку изображений и начальные значения пикселей каждого из них
+
+Начинаем рисовать с этими изображениями!
+VkRenderingInfoKHR rendering_info{
+.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+	.renderArea = {0, 0, // В какую область рисовать
+                   veekay::app.window_width,
+                   veekay::app.window_height},
+	.layerCount = 1,
+	.colorAttachmentCount = 1,
+	.pColorAttachments = &color_attachment, // Где компонент цвета
+	.pDepthAttachment = &depth_attachment, // Где компонент глубины
+};
+
+vkCmdBeginRenderingKHR(cmd, &rendering_info);
+
+
+Начали, рисуем, заканчиваем…
+// Используем новый объект граф. конвейера для дин. рендеринга vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                  offscreen_pipeline);
+
+// Рисуем, как рисовали раньше...
+
+// Заканчиваем vkCmdBegin.. Симметричным vkCmdEnd..
+vkCmdEndRenderingKHR(cmd);
+
+
+VkImageMemoryBarrier barrier{
+	.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+	.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, // Ждем, пока запись не завершится
+	.dstAccessMask = 0,
+	.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, // Переводим из формата для рисования
+	.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, // в формат для сэмплирования
+	.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	.image = os_color_image,
+	.subresourceRange{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.baseArrayLayer = 0,
+		.layerCount = 1,
+	},
+};
+		
+vkCmdPipelineBarrier(cmd,
+			     // Ждём перевода формата от начала записи в изображение к началу исполнения..
+		           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 
+		           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, // ..фрагментного шейдера
+		           0, 0, nullptr, 0, nullptr, 1, &barrier);
+Перевод цветного изображения в формат для сэмплирования
