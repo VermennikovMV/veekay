@@ -144,28 +144,38 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			return 1;
 		}
 
-		vkb::PhysicalDeviceSelector physical_device_selector(instance);
+                vkb::PhysicalDeviceSelector physical_device_selector(instance);
 
-		VkPhysicalDeviceFeatures device_features{
-			.samplerAnisotropy = true,
-		};
+                VkPhysicalDeviceFeatures device_features{
+                        .samplerAnisotropy = true,
+                };
 
-		auto selector_result = physical_device_selector.set_surface(vk_surface)
-		                                               .set_required_features(device_features)
-		                                               .select();
-		if (!selector_result) {
+                physical_device_selector.add_required_extension(
+                        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+
+                auto selector_result = physical_device_selector.set_surface(vk_surface)
+                                                               .set_required_features(device_features)
+                                                               .select();
+                if (!selector_result) {
 			std::cerr << selector_result.error().message() << '\n';
 			return 1;
 		}
 
-		auto physical_device = selector_result.value();
+                auto physical_device = selector_result.value();
 
-		{
-			vkb::DeviceBuilder device_builder(physical_device);
+                {
+                        vkb::DeviceBuilder device_builder(physical_device);
 
-			auto result = device_builder.build();
+                        VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering{
+                                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+                                .dynamicRendering = VK_TRUE,
+                        };
 
-			if (!result) {
+                        device_builder.add_pNext(&dynamic_rendering);
+
+                        auto result = device_builder.build();
+
+                        if (!result) {
 				std::cerr << result.error().message() << '\n';
 				return 1;
 			}
