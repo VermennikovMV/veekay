@@ -120,7 +120,8 @@ struct Camera {
 // NOTE: Scene objects
 inline namespace {
         Camera camera{
-                .position = {0.0f, -0.5f, -3.0f}
+                .position = {0.0f, -0.5f, -3.0f},
+                .rotation = {0.0f, 0.0f, 180.0f},
         };
 
         std::vector<Model> models;
@@ -200,7 +201,7 @@ veekay::vec3 rightFromRotation(const veekay::vec3& rotation) {
 
 // NOTE: Vulkan objects
 inline namespace {
-	VkShaderModule vertex_shader_module;
+        VkShaderModule vertex_shader_module;
         VkShaderModule fragment_shader_module;
 
         VkDescriptorPool descriptor_pool;
@@ -209,16 +210,19 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh base_mesh;
 
-	veekay::graphics::Texture* missing_texture;
-	VkSampler missing_texture_sampler;
+        veekay::graphics::Texture* missing_texture;
+        VkSampler missing_texture_sampler;
 
-	veekay::graphics::Texture* texture;
-	VkSampler texture_sampler;
+        veekay::graphics::Texture* texture;
+        VkSampler texture_sampler;
+
+        veekay::graphics::Texture* white_texture;
 }
 
 veekay::mat4 Transform::matrix() const {
@@ -605,6 +609,13 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        { // NOTE: Solid white texture for untextured geometry
+                uint32_t white_pixel[] = {0xffffffff};
+                white_texture = new veekay::graphics::Texture(cmd, 1, 1,
+                                                              VK_FORMAT_B8G8R8A8_UNORM,
+                                                              white_pixel);
+        }
+
         materials.push_back(Material{
                 .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
                 .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
@@ -621,6 +632,15 @@ void initialize(VkCommandBuffer cmd) {
                 .shininess = 48.0f,
                 .sampler = missing_texture_sampler,
                 .texture = missing_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.12f, 0.12f, 0.12f},
+                .diffuse_color = veekay::vec3{0.8f, 0.8f, 0.8f},
+                .specular_color = veekay::vec3{0.2f, 0.2f, 0.2f},
+                .shininess = 8.0f,
+                .sampler = missing_texture_sampler,
+                .texture = white_texture,
         });
 
         if (materials.size() > max_materials) {
@@ -702,6 +722,33 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        // NOTE: Base mesh initialization (flat ground plane)
+        {
+                const float half_size = 6.0f;
+
+                std::vector<Vertex> vertices{
+                        {{-half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        {{-half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices{
+                        0, 1, 2,
+                        2, 3, 0,
+                };
+
+                base_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                base_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                base_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Cone mesh initialization
         {
                 const float radius = 0.5f;
@@ -765,6 +812,17 @@ void initialize(VkCommandBuffer cmd) {
         }
 
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = base_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
@@ -867,7 +925,10 @@ void shutdown() {
                 delete texture;
         }
         delete missing_texture;
+        delete white_texture;
 
+        delete base_mesh.index_buffer;
+        delete base_mesh.vertex_buffer;
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
 
