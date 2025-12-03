@@ -7,6 +7,7 @@ layout (location = 2) in vec2 v_uv;
 layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
+layout (location = 3) out vec4 f_light_space;
 
 const uint MAX_POINT_LIGHTS = 4u;
 
@@ -22,10 +23,12 @@ vec4 color;
 
 layout (binding = 0, std140) uniform SceneUniforms {
     mat4 view_projection;
+    mat4 light_view_projection;
     vec4 camera_position;
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 light_mode;
+    vec4 render_flags;
     DirectionalLight directional_light;
     vec4 point_light_count;
     PointLight point_lights[MAX_POINT_LIGHTS];
@@ -43,9 +46,11 @@ void main() {
     mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
 vec3 normal = normalize(normal_matrix * v_normal);
 
-    gl_Position = scene.view_projection * position;
+    mat4 projection = scene.render_flags.x > 0.5f ? scene.light_view_projection : scene.view_projection;
+    gl_Position = projection * position;
 
 f_position = position.xyz;
 f_normal = normal;
 f_uv = v_uv;
+f_light_space = scene.light_view_projection * position;
 }
