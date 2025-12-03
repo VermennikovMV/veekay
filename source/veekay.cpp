@@ -120,8 +120,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 	app.window_height = window_default_height;
 #endif
 
-	{ // NOTE: Initialize Vulkan: grab device and create swapchain
-		vkb::InstanceBuilder instance_builder;
+                { // NOTE: Initialize Vulkan: grab device and create swapchain
+                        vkb::InstanceBuilder instance_builder;
 
 		auto builder_result = instance_builder.require_api_version(1, 2, 0)
 		                                      .request_validation_layers()
@@ -150,24 +150,31 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			.samplerAnisotropy = true,
 		};
 
-		auto selector_result = physical_device_selector.set_surface(vk_surface)
-		                                               .set_required_features(device_features)
-		                                               .select();
-		if (!selector_result) {
-			std::cerr << selector_result.error().message() << '\n';
-			return 1;
-		}
+                auto selector_result = physical_device_selector.set_surface(vk_surface)
+                                                               .set_required_features(device_features)
+                                                               .select();
+                if (!selector_result) {
+                        std::cerr << selector_result.error().message() << '\n';
+                        return 1;
+                }
 
-		auto physical_device = selector_result.value();
+                auto physical_device = selector_result.value();
 
-		{
-			vkb::DeviceBuilder device_builder(physical_device);
+                {
+                        vkb::DeviceBuilder device_builder(physical_device);
 
-			auto result = device_builder.build();
+                        VkPhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{
+                                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES,
+                                .dynamicRendering = VK_TRUE,
+                        };
 
-			if (!result) {
-				std::cerr << result.error().message() << '\n';
-				return 1;
+                        auto result = device_builder.add_required_extension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)
+                                                   .add_pNext(&dynamic_rendering_features)
+                                                   .build();
+
+                        if (!result) {
+                                std::cerr << result.error().message() << '\n';
+                                return 1;
 			}
 
 			auto device = result.value();
