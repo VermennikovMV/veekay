@@ -7,45 +7,44 @@ layout (location = 2) in vec2 v_uv;
 layout (location = 0) out vec3 f_position;
 layout (location = 1) out vec3 f_normal;
 layout (location = 2) out vec2 f_uv;
+layout (location = 3) out vec4 f_shadow_coord;
+layout (location = 4) out vec4 f_spot_shadow0;
+layout (location = 5) out vec4 f_spot_shadow1;
 
-const uint MAX_POINT_LIGHTS = 4u;
+const uint MAX_SPOT_SHADOWS = 2u;
 
-struct DirectionalLight {
-vec4 direction_intensity;
-vec4 color;
-};
-
-struct PointLight {
-vec4 position_intensity;
-vec4 color;
-};
-
-layout (binding = 0, std140) uniform SceneUniforms {
+struct SceneUniforms {
     mat4 view_projection;
+    mat4 shadow_view_projection;
     vec4 camera_position;
     vec4 ambient_color;
-    vec4 diffuse_color;
-    vec4 light_mode;
-    DirectionalLight directional_light;
-    vec4 point_light_count;
-    PointLight point_lights[MAX_POINT_LIGHTS];
-} scene;
+    vec4 directional_direction_intensity;
+    vec4 directional_color;
+    vec4 light_counts;
+    mat4 spot_shadow_view_projections[MAX_SPOT_SHADOWS];
+    vec4 spot_shadow_indices;
+};
+
+layout (binding = 0, std140) uniform SceneBuffer {
+    SceneUniforms scene;
+};
 
 layout (binding = 1, std140) uniform ModelUniforms {
     mat4 model;
-    vec4 ambient_color;
-    vec4 diffuse_color;
-    vec4 specular_color_shininess;
+    vec4 albedo_shininess;
+    vec4 specular_color;
 } model_uniforms;
 
 void main() {
-    vec4 position = model_uniforms.model * vec4(v_position, 1.0f);
+    vec4 world_position = model_uniforms.model * vec4(v_position, 1.0);
     mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
-vec3 normal = normalize(normal_matrix * v_normal);
 
-    gl_Position = scene.view_projection * position;
+    f_position = world_position.xyz;
+    f_normal = normalize(normal_matrix * v_normal);
+    f_uv = v_uv;
+    f_shadow_coord = scene.shadow_view_projection * world_position;
+    f_spot_shadow0 = scene.spot_shadow_view_projections[0] * world_position;
+    f_spot_shadow1 = scene.spot_shadow_view_projections[1] * world_position;
 
-f_position = position.xyz;
-f_normal = normal;
-f_uv = v_uv;
+    gl_Position = scene.view_projection * world_position;
 }
