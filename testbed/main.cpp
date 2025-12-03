@@ -41,6 +41,7 @@ struct Material {
         veekay::vec3 diffuse_color;
         veekay::vec3 specular_color;
         float shininess = 32.0f;
+        bool use_texture = true;
 
         VkSampler sampler = VK_NULL_HANDLE;
         veekay::graphics::Texture* texture = nullptr;
@@ -73,6 +74,7 @@ struct ModelUniforms {
         veekay::vec4 ambient_color;
         veekay::vec4 diffuse_color;
         veekay::vec4 specular_color_shininess;
+        veekay::vec4 texture_usage;
 };
 
 struct Mesh {
@@ -122,6 +124,8 @@ inline namespace {
         Camera camera{
                 .position = {0.0f, -0.5f, -3.0f}
         };
+
+        constexpr float ground_height = -0.5f;
 
         std::vector<Model> models;
         std::vector<Material> materials;
@@ -213,6 +217,7 @@ inline namespace {
 	veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh plane_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -239,7 +244,9 @@ veekay::mat4 Camera::view() const {
         auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(-rotation.y));
         auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(-rotation.z));
 
-        return rz * ry * rx * t;
+        auto flip = veekay::mat4::scaling({1.0f, -1.0f, 1.0f});
+
+        return flip * rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
@@ -612,6 +619,7 @@ void initialize(VkCommandBuffer cmd) {
                 .shininess = 24.0f,
                 .sampler = texture_sampler,
                 .texture = texture,
+                .use_texture = true,
         });
 
         materials.push_back(Material{
@@ -621,6 +629,17 @@ void initialize(VkCommandBuffer cmd) {
                 .shininess = 48.0f,
                 .sampler = missing_texture_sampler,
                 .texture = missing_texture,
+                .use_texture = true,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.1f, 0.1f, 0.1f},
+                .diffuse_color = veekay::vec3{0.35f, 0.35f, 0.35f},
+                .specular_color = veekay::vec3{0.05f, 0.05f, 0.05f},
+                .shininess = 8.0f,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+                .use_texture = false,
         });
 
         if (materials.size() > max_materials) {
@@ -764,11 +783,44 @@ void initialize(VkCommandBuffer cmd) {
                 cone_mesh.indices = uint32_t(indices.size());
         }
 
+        {
+                const float half_size = 5.0f;
+                const std::array<Vertex, 4> vertices{
+                        Vertex{{-half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        Vertex{{half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        Vertex{{half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        Vertex{{-half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                const std::array<uint32_t, 6> indices{0, 1, 2, 2, 3, 0};
+
+                plane_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                plane_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                plane_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = plane_mesh,
+                .transform = Transform{
+                        .position = {0.0f, ground_height, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {-1.5f, -0.5f, -2.0f},
+                        .position = {-1.5f, ground_height, -2.0f},
                         .scale = {0.8f, 0.8f, 0.8f},
                 },
                 .angular_speed = 0.0f,
@@ -779,7 +831,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {1.2f, -0.5f, -0.5f},
+                        .position = {1.2f, ground_height, -0.5f},
                         .scale = {1.2f, 1.2f, 1.2f},
                 },
                 .angular_speed = 0.0f,
@@ -790,7 +842,7 @@ void initialize(VkCommandBuffer cmd) {
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
-                        .position = {0.0f, -0.5f, 1.2f},
+                        .position = {0.0f, ground_height, 1.2f},
                         .scale = {0.6f, 0.6f, 0.6f},
                 },
                 .angular_speed = 0.0f,
@@ -841,6 +893,12 @@ void initialize(VkCommandBuffer cmd) {
                         model.material->specular_color.z,
                         model.material->shininess
                 };
+                uniforms.texture_usage = veekay::vec4{
+                        model.material->use_texture ? 1.0f : 0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f
+                };
         }
 
         const size_t alignment =
@@ -870,6 +928,9 @@ void shutdown() {
 
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
+
+        delete plane_mesh.index_buffer;
+        delete plane_mesh.vertex_buffer;
 
 	delete model_uniforms_buffer;
 	delete scene_uniforms_buffer;
@@ -1030,6 +1091,12 @@ void update(double time) {
                         model.material->specular_color.y,
                         model.material->specular_color.z,
                         model.material->shininess
+                };
+                uniforms.texture_usage = veekay::vec4{
+                        model.material->use_texture ? 1.0f : 0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f
                 };
         }
 
