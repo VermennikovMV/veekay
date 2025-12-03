@@ -47,11 +47,11 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 specular_color;
 } model_uniforms;
 
-layout (binding = 2) buffer PointLights {
+layout (binding = 2) readonly buffer PointLights {
     PointLightGpu point_lights[];
 };
 
-layout (binding = 3) buffer SpotLights {
+layout (binding = 3) readonly buffer SpotLights {
     SpotLightGpu spot_lights[];
 };
 
