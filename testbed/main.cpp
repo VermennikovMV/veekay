@@ -209,16 +209,19 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh ground_mesh;
 
-	veekay::graphics::Texture* missing_texture;
-	VkSampler missing_texture_sampler;
+        veekay::graphics::Texture* missing_texture;
+        VkSampler missing_texture_sampler;
 
-	veekay::graphics::Texture* texture;
-	VkSampler texture_sampler;
+        veekay::graphics::Texture* texture;
+        VkSampler texture_sampler;
+
+        veekay::graphics::Texture* white_texture;
 }
 
 veekay::mat4 Transform::matrix() const {
@@ -239,7 +242,9 @@ veekay::mat4 Camera::view() const {
         auto ry = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, toRadians(-rotation.y));
         auto rz = veekay::mat4::rotation({0.0f, 0.0f, 1.0f}, toRadians(-rotation.z));
 
-        return rz * ry * rx * t;
+        auto flip = veekay::mat4::scaling({1.0f, -1.0f, 1.0f});
+
+        return flip * rz * ry * rx * t;
 }
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
@@ -605,6 +610,13 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        {
+                uint32_t white_pixel = 0xffffffffu;
+                white_texture = new veekay::graphics::Texture(cmd, 1, 1,
+                                                               VK_FORMAT_B8G8R8A8_UNORM,
+                                                               &white_pixel);
+        }
+
         materials.push_back(Material{
                 .ambient_color = veekay::vec3{0.12f, 0.08f, 0.04f},
                 .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
@@ -621,6 +633,15 @@ void initialize(VkCommandBuffer cmd) {
                 .shininess = 48.0f,
                 .sampler = missing_texture_sampler,
                 .texture = missing_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.08f, 0.08f, 0.08f},
+                .diffuse_color = veekay::vec3{0.5f, 0.5f, 0.5f},
+                .specular_color = veekay::vec3{0.1f, 0.1f, 0.1f},
+                .shininess = 8.0f,
+                .sampler = texture_sampler,
+                .texture = white_texture,
         });
 
         if (materials.size() > max_materials) {
@@ -764,6 +785,32 @@ void initialize(VkCommandBuffer cmd) {
                 cone_mesh.indices = uint32_t(indices.size());
         }
 
+        {
+                const float half_size = 6.0f;
+
+                std::vector<Vertex> vertices = {
+                        {{-half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        {{half_size, 0.0f, -half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        {{-half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                        {{half_size, 0.0f, half_size}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices = {
+                        0, 1, 2,
+                        2, 1, 3,
+                };
+
+                ground_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                ground_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                ground_mesh.indices = static_cast<uint32_t>(indices.size());
+        }
+
         // NOTE: Add models to scene
         models.emplace_back(Model{
                 .mesh = cone_mesh,
@@ -796,6 +843,17 @@ void initialize(VkCommandBuffer cmd) {
                 .angular_speed = 0.0f,
                 .rotation_axis = {0.0f, 1.0f, 0.0f},
                 .material = &materials[0],
+        });
+
+        models.emplace_back(Model{
+                .mesh = ground_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.5f, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
         });
 
         float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
@@ -868,8 +926,15 @@ void shutdown() {
         }
         delete missing_texture;
 
+        if (white_texture) {
+                delete white_texture;
+        }
+
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
+
+        delete ground_mesh.index_buffer;
+        delete ground_mesh.vertex_buffer;
 
 	delete model_uniforms_buffer;
 	delete scene_uniforms_buffer;
