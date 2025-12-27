@@ -41,6 +41,7 @@ struct Material {
         veekay::vec3 diffuse_color;
         veekay::vec3 specular_color;
         float shininess = 32.0f;
+        bool use_texture = true;
 
         VkSampler sampler = VK_NULL_HANDLE;
         veekay::graphics::Texture* texture = nullptr;
@@ -73,6 +74,7 @@ struct ModelUniforms {
         veekay::vec4 ambient_color;
         veekay::vec4 diffuse_color;
         veekay::vec4 specular_color_shininess;
+        veekay::vec4 texture_usage;
 };
 
 struct Mesh {
@@ -120,7 +122,8 @@ struct Camera {
 // NOTE: Scene objects
 inline namespace {
         Camera camera{
-                .position = {0.0f, -0.5f, -3.0f}
+                .position = {0.0f, -0.5f, -3.0f},
+                .rotation = {0.0f, 0.0f, 180.0f},
         };
 
         std::vector<Model> models;
@@ -145,7 +148,7 @@ inline namespace {
                 };
                 state.point_lights = {
                         PointLight{
-                                .position_intensity = veekay::vec4{-1.5f, 0.0f, -1.0f, 8.0f},
+                                .position_intensity = veekay::vec4{-1.5f, 0.6f, -1.0f, 8.0f},
                                 .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
                         },
                         PointLight{},
@@ -209,10 +212,11 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh base_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -623,6 +627,16 @@ void initialize(VkCommandBuffer cmd) {
                 .texture = missing_texture,
         });
 
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.1f, 0.1f, 0.1f},
+                .diffuse_color = veekay::vec3{0.4f, 0.4f, 0.45f},
+                .specular_color = veekay::vec3{0.2f, 0.2f, 0.22f},
+                .shininess = 16.0f,
+                .use_texture = false,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+        });
+
         if (materials.size() > max_materials) {
                 std::cerr << "Too many materials for descriptor pool" << std::endl;
                 veekay::app.running = false;
@@ -702,6 +716,51 @@ void initialize(VkCommandBuffer cmd) {
                 }
         }
 
+        // NOTE: Base mesh initialization
+        {
+                const float half_size = 2.5f;
+                const float half_depth = 2.5f;
+                const float half_height = 0.1f;
+
+                std::vector<Vertex> vertices = {
+                        // Top
+                        {{-half_size, half_height, -half_depth}, {0.0f, 1.0f, 0.0f}, {}},
+                        {{half_size, half_height, -half_depth}, {0.0f, 1.0f, 0.0f}, {}},
+                        {{half_size, half_height, half_depth}, {0.0f, 1.0f, 0.0f}, {}},
+                        {{-half_size, half_height, half_depth}, {0.0f, 1.0f, 0.0f}, {}},
+                        // Bottom
+                        {{-half_size, -half_height, -half_depth}, {0.0f, -1.0f, 0.0f}, {}},
+                        {{half_size, -half_height, -half_depth}, {0.0f, -1.0f, 0.0f}, {}},
+                        {{half_size, -half_height, half_depth}, {0.0f, -1.0f, 0.0f}, {}},
+                        {{-half_size, -half_height, half_depth}, {0.0f, -1.0f, 0.0f}, {}},
+                };
+
+                std::vector<uint32_t> indices = {
+                        // Top
+                        0, 1, 2, 2, 3, 0,
+                        // Bottom
+                        4, 7, 6, 6, 5, 4,
+                        // Front
+                        4, 5, 1, 1, 0, 4,
+                        // Back
+                        7, 3, 2, 2, 6, 7,
+                        // Left
+                        4, 0, 3, 3, 7, 4,
+                        // Right
+                        5, 6, 2, 2, 1, 5,
+                };
+
+                base_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                base_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                base_mesh.indices = static_cast<uint32_t>(indices.size());
+        }
+
         // NOTE: Cone mesh initialization
         {
                 const float radius = 0.5f;
@@ -765,6 +824,17 @@ void initialize(VkCommandBuffer cmd) {
         }
 
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = base_mesh,
+                .transform = Transform{
+                        .position = {0.0f, -0.6f, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
@@ -841,6 +911,12 @@ void initialize(VkCommandBuffer cmd) {
                         model.material->specular_color.z,
                         model.material->shininess
                 };
+                uniforms.texture_usage = veekay::vec4{
+                        model.material->use_texture ? 1.0f : 0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
+                };
         }
 
         const size_t alignment =
@@ -870,6 +946,9 @@ void shutdown() {
 
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
+
+        delete base_mesh.index_buffer;
+        delete base_mesh.vertex_buffer;
 
 	delete model_uniforms_buffer;
 	delete scene_uniforms_buffer;
@@ -1030,6 +1109,12 @@ void update(double time) {
                         model.material->specular_color.y,
                         model.material->specular_color.z,
                         model.material->shininess
+                };
+                uniforms.texture_usage = veekay::vec4{
+                        model.material->use_texture ? 1.0f : 0.0f,
+                        0.0f,
+                        0.0f,
+                        0.0f,
                 };
         }
 
