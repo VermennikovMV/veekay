@@ -34,6 +34,7 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 specular_color_shininess;
+    vec4 flags;
 } model_uniforms;
 
 layout (binding = 2) uniform sampler2D model_texture;
@@ -84,6 +85,12 @@ void main() {
     vec3 view_dir = normalize(scene.camera_position.xyz - f_position);
     uint mode = uint(scene.light_mode.x + 0.5f);
     vec3 color = scene.ambient_color.rgb * ambient_albedo;
+
+    if (model_uniforms.flags.x > 0.5f) {
+        float opacity = 0.6f;
+        final_color = vec4(vec3(0.0f), opacity);
+        return;
+    }
 
     if (mode == 0u) {
         color += calculateDiffuse(f_position, normal, diffuse_albedo);
