@@ -36,12 +36,31 @@ layout (binding = 1, std140) uniform ModelUniforms {
     vec4 ambient_color;
     vec4 diffuse_color;
     vec4 specular_color_shininess;
+    vec4 shadow_info;
 } model_uniforms;
 
 void main() {
     vec4 position = model_uniforms.model * vec4(v_position, 1.0f);
+    bool is_shadow = model_uniforms.shadow_info.x > 0.5f;
+
+    if (is_shadow) {
+        vec3 light_raw = -scene.directional_light.direction_intensity.xyz;
+        float length_light = length(light_raw);
+        vec3 light_dir = length_light > 1e-4f ? light_raw / length_light : vec3(0.0f, -1.0f, 0.0f);
+        float denom = light_dir.y;
+        float safe_denom = abs(denom) < 1e-4f ? (denom < 0.0f ? -1e-4f : 1e-4f) : denom;
+        float t = (model_uniforms.shadow_info.y - position.y) / safe_denom;
+        vec3 projected = position.xyz + light_dir * t;
+        projected.y += model_uniforms.shadow_info.z;
+
+        position = vec4(projected, 1.0f);
+    }
+
     mat3 normal_matrix = transpose(inverse(mat3(model_uniforms.model)));
 vec3 normal = normalize(normal_matrix * v_normal);
+    if (is_shadow) {
+        normal = vec3(0.0f, 1.0f, 0.0f);
+    }
 
     gl_Position = scene.view_projection * position;
 
