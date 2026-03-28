@@ -38,6 +38,31 @@ layout (binding = 1, std140) uniform ModelUniforms {
 
 layout (binding = 2) uniform sampler2D model_texture;
 
+float calculateShadowFactor(vec3 position, vec3 normal) {
+    uint mode = uint(scene.light_mode.x + 0.5f);
+
+    if (mode == 1u) {
+        vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
+        return clamp(dot(normal, light_dir), 0.0f, 1.0f);
+    } else if (mode == 2u) {
+        uint count = min(uint(scene.point_light_count.x), MAX_POINT_LIGHTS);
+        float strongest = 0.0f;
+
+        for (uint i = 0; i < count; ++i) {
+            vec3 offset = scene.point_lights[i].position_intensity.xyz - position;
+            float distance = length(offset);
+            vec3 light_dir = distance > 0.0f ? offset / distance : vec3(0.0f, 1.0f, 0.0f);
+            float falloff = scene.point_lights[i].position_intensity.w / (1.0f + distance * distance);
+            strongest = max(strongest, clamp(dot(normal, light_dir), 0.0f, 1.0f) * falloff);
+        }
+
+        return clamp(strongest, 0.0f, 1.0f);
+    }
+
+    vec3 diffuse_dir = normalize(-position);
+    return clamp(dot(normal, diffuse_dir), 0.0f, 1.0f);
+}
+
 vec3 calculateDirectional(vec3 normal, vec3 view_dir, vec3 diffuse_albedo, vec3 specular_color, float shininess) {
     vec3 light_dir = normalize(-scene.directional_light.direction_intensity.xyz);
     vec3 light_color = scene.directional_light.color.rgb * scene.directional_light.direction_intensity.w;
@@ -85,6 +110,8 @@ void main() {
     uint mode = uint(scene.light_mode.x + 0.5f);
     vec3 color = scene.ambient_color.rgb * ambient_albedo;
 
+    float shadow = calculateShadowFactor(f_position, normal);
+
     if (mode == 0u) {
         color += calculateDiffuse(f_position, normal, diffuse_albedo);
     } else if (mode == 1u) {
@@ -95,5 +122,6 @@ void main() {
             color += calculatePoint(scene.point_lights[i], f_position, normal, view_dir, diffuse_albedo, specular_color, shininess);
         }
     }
+    color = mix(color * 0.35f, color, shadow);
 final_color = vec4(color, 1.0f);
 }
