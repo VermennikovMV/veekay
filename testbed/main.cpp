@@ -42,6 +42,8 @@ struct Material {
         veekay::vec3 specular_color;
         float shininess = 32.0f;
 
+        bool use_texture = true;
+
         VkSampler sampler = VK_NULL_HANDLE;
         veekay::graphics::Texture* texture = nullptr;
         VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
@@ -73,12 +75,13 @@ struct ModelUniforms {
         veekay::vec4 ambient_color;
         veekay::vec4 diffuse_color;
         veekay::vec4 specular_color_shininess;
+        veekay::vec4 material_options;
 };
 
 struct Mesh {
-	veekay::graphics::Buffer* vertex_buffer;
-	veekay::graphics::Buffer* index_buffer;
-	uint32_t indices;
+        veekay::graphics::Buffer* vertex_buffer = nullptr;
+        veekay::graphics::Buffer* index_buffer = nullptr;
+        uint32_t indices = 0u;
 };
 
 struct Transform {
@@ -120,7 +123,8 @@ struct Camera {
 // NOTE: Scene objects
 inline namespace {
         Camera camera{
-                .position = {0.0f, -0.5f, -3.0f}
+                .position = {0.0f, -0.5f, -3.0f},
+                .rotation = {0.0f, 0.0f, 180.0f}
         };
 
         std::vector<Model> models;
@@ -145,7 +149,7 @@ inline namespace {
                 };
                 state.point_lights = {
                         PointLight{
-                                .position_intensity = veekay::vec4{-1.5f, 0.0f, -1.0f, 8.0f},
+                                .position_intensity = veekay::vec4{-1.5f, 0.5f, -1.0f, 8.0f},
                                 .color = veekay::vec4{1.0f, 0.9f, 0.7f, 1.0f},
                         },
                         PointLight{},
@@ -209,10 +213,11 @@ inline namespace {
         VkPipelineLayout pipeline_layout;
         VkPipeline pipeline;
 
-	veekay::graphics::Buffer* scene_uniforms_buffer;
-	veekay::graphics::Buffer* model_uniforms_buffer;
+        veekay::graphics::Buffer* scene_uniforms_buffer;
+        veekay::graphics::Buffer* model_uniforms_buffer;
 
         Mesh cone_mesh;
+        Mesh foundation_mesh;
 
 	veekay::graphics::Texture* missing_texture;
 	VkSampler missing_texture_sampler;
@@ -610,6 +615,7 @@ void initialize(VkCommandBuffer cmd) {
                 .diffuse_color = veekay::vec3{1.0f, 0.6f, 0.2f},
                 .specular_color = veekay::vec3{0.9f, 0.85f, 0.8f},
                 .shininess = 24.0f,
+                .use_texture = true,
                 .sampler = texture_sampler,
                 .texture = texture,
         });
@@ -619,6 +625,17 @@ void initialize(VkCommandBuffer cmd) {
                 .diffuse_color = veekay::vec3{0.3f, 0.8f, 1.0f},
                 .specular_color = veekay::vec3{0.95f, 0.95f, 0.95f},
                 .shininess = 48.0f,
+                .use_texture = true,
+                .sampler = missing_texture_sampler,
+                .texture = missing_texture,
+        });
+
+        materials.push_back(Material{
+                .ambient_color = veekay::vec3{0.14f, 0.14f, 0.14f},
+                .diffuse_color = veekay::vec3{0.6f, 0.6f, 0.6f},
+                .specular_color = veekay::vec3{0.2f, 0.2f, 0.2f},
+                .shininess = 12.0f,
+                .use_texture = false,
                 .sampler = missing_texture_sampler,
                 .texture = missing_texture,
         });
@@ -764,7 +781,42 @@ void initialize(VkCommandBuffer cmd) {
                 cone_mesh.indices = uint32_t(indices.size());
         }
 
+        { // NOTE: Build a shared foundation plane without textures
+                std::vector<Vertex> vertices{
+                        Vertex{{-3.0f, -0.5f, -3.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+                        Vertex{{3.0f, -0.5f, -3.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+                        Vertex{{3.0f, -0.5f, 3.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+                        Vertex{{-3.0f, -0.5f, 3.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                };
+
+                std::vector<uint32_t> indices{
+                        0, 1, 2,
+                        0, 3, 2,
+                };
+
+                foundation_mesh.vertex_buffer = new veekay::graphics::Buffer(
+                        vertices.size() * sizeof(Vertex), vertices.data(),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+                foundation_mesh.index_buffer = new veekay::graphics::Buffer(
+                        indices.size() * sizeof(uint32_t), indices.data(),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+                foundation_mesh.indices = uint32_t(indices.size());
+        }
+
         // NOTE: Add models to scene
+        models.emplace_back(Model{
+                .mesh = foundation_mesh,
+                .transform = Transform{
+                        .position = {0.0f, 0.0f, 0.0f},
+                        .scale = {1.0f, 1.0f, 1.0f},
+                },
+                .angular_speed = 0.0f,
+                .rotation_axis = {0.0f, 1.0f, 0.0f},
+                .material = &materials[2],
+        });
+
         models.emplace_back(Model{
                 .mesh = cone_mesh,
                 .transform = Transform{
@@ -841,6 +893,10 @@ void initialize(VkCommandBuffer cmd) {
                         model.material->specular_color.z,
                         model.material->shininess
                 };
+                uniforms.material_options = veekay::vec4{
+                        model.material->use_texture ? 1.0f : 0.0f,
+                        0.0f, 0.0f, 0.0f
+                };
         }
 
         const size_t alignment =
@@ -867,6 +923,9 @@ void shutdown() {
                 delete texture;
         }
         delete missing_texture;
+
+        delete foundation_mesh.index_buffer;
+        delete foundation_mesh.vertex_buffer;
 
         delete cone_mesh.index_buffer;
         delete cone_mesh.vertex_buffer;
